@@ -217,6 +217,10 @@ local dread_spikes = {enabled = true,
 --   handoff_wait   s the best continuer gets before the next best goes
 --   opener_wait    s the best opener gets before the next best opens
 --   max_steps      longest chain before a new one is opened
+--   bank_hpp       no new chain on a mob at or under this HP% (keep TP for the
+--                  next mob) unless you have 2000+ TP; 0 = off
+--   noshow_max     a teammate who passes on a planned WS this many times
+--                  stops being planned for it (this session)
 --   plan_depth     steps looked ahead when picking an opener
 --   once_per_mob   [weapon] = WS used once on each new mob before chaining
 --   filler_jobs    jobs that magic burst first and only WS when no melee is
@@ -234,16 +238,18 @@ local dread_spikes = {enabled = true,
 local group_skillchain = {enabled = true,
 	min_players    = 2,
 	soon_tp        = 750,
-	window_open    = 3.0,
-	window_close   = 8.0,
-	window_step    = 1.0,
-	window_min     = 5.0,
+	window_open    = 2.5,    -- v4.71: from logs, SCs formed 2-10s after the previous WS
+	window_close   = 10.0,
+	window_step    = 0,      -- v4.71: the window did not shrink with steps
+	window_min     = 8.0,
 	ws_lead        = 1.0,
 	handoff_wait   = 1.5,
 	opener_wait    = 2.0,
-	max_steps      = 5,
+	max_steps      = 8,
 	plan_depth     = 3,
 	filler_wait_tp = 600,
+	bank_hpp       = 10,     -- v4.71: no new chain at or under this mob HP% (unless 2000+ TP)
+	noshow_max     = 3,      -- v4.71: drop a teammate's WS after they pass on it this many times
 	once_per_mob   = {['Great Axe'] = 'Full Break'},
 	filler_jobs    = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
 	fillers        = {},
@@ -256,7 +262,7 @@ local group_skillchain = {enabled = true,
 	pools = {
 		['Great Axe']    = {'Upheaval', "Ukko's Fury", 'Full Break'},
 		['Great Katana'] = {'Tachi: Shoha', 'Tachi: Fudo', 'Tachi: Kasha'},  -- 'Tachi: Rana' (4.2k, Fragmentation chains only)
-		['Sword']        = {'Savage Blade', 'Requiescat'},  -- add 'Chant du Cygne' / 'Knights of Round' / 'Death Blossom' if known
+		['Sword']        = {'Savage Blade'},  -- v4.71: Requiescat removed (Scrach doesn't have it); add 'Requiescat' / 'Chant du Cygne' / 'Knights of Round' / 'Death Blossom' if known
 		['Great Sword']  = {'Resolution', 'Torcleaver', 'Ground Strike'},
 		['Scythe']       = {'Cross Reaper', 'Entropy', 'Insurgency'},
 		['Polearm']      = {'Stardiver', 'Impulse Drive', 'Drakesbane', "Camlann's Torment"},

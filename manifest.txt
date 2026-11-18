@@ -1,6 +1,6 @@
 # AutoAttack release manifest -- read by "aa update"
-version=4.70
-file=autoattack.lua 559654
+version=4.71
+file=autoattack.lua 562871
 file=aa_party.lua 90188
-file=aa_config_defaults.lua 104709
-file=README.md 68487
+file=aa_config_defaults.lua 105343
+file=README.md 69084

@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.70** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.71** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -520,7 +520,10 @@ When another player is in the party (`group_skillchain.min_players`, default 2 w
 * **Once per mob.** `once_per_mob = {['Great Axe'] = 'Full Break'}`: a player who still owes that WS on the current mob opens with it, then the chain carries on (Full Break > Kasha = Fusion > Ukko's Fury = Light > Fudo = Light).
 * **Fillers** (`filler_jobs`, default RDM BLM WHM SCH GEO BRD SMN, or `fillers = {'Name'}`): magic burst first; use TP to continue a chain only when no melee can, otherwise only while the melee are under `filler_wait_tp` (or the filler is near 3000 TP).
 * **Weapons.** Yours is read from your main hand; other players' from `job_weapons[job]`, or `weapons[name]` until their job is known. `pools[weapon]` lists the WS each player brings (yours only the ones you have learned).
-* **Collision guard.** No WS while another party member's WS is readying.
+* **Collision guard.** No WS while another party member's WS is readying. Teammates see each other's TP a moment late, so a teammate within `soon_tp` of 1000 keeps their opener turn, and whoever made the last WS continues only after everyone else (v4.71).
+* **Window** (v4.71, from logs): skillchains formed 2-10 s after the previous WS at every step, so `window_open` 2.5, `window_close` 10, no shrink per step.
+* **No-shows** (v4.71): a teammate who passes on a planned WS `noshow_max` times (3) stops being planned for it this session.
+* **TP bank** (v4.71): no new chain on a mob at or under `bank_hpp` % HP (10) unless you have 2000+ TP; that TP opens the next mob.
 * `//aa gsc` shows what it sees (players, jobs, weapons, TP, pools, last chain). `//aa gsc on|off` overrides `enabled` for this session; `//aa gsc auto` goes back to the config. Also by tell or party chat: `aa gsc off`.
 * Only with `ws_mode.type = "Normal"`; AoE / Odin / other modes still use `ws_list`.
 

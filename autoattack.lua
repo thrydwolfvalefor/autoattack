@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.70'
+_addon.version  = '4.71'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -4736,8 +4736,9 @@ GSC_POWER = {['Upheaval'] = 12.8, ["Ukko's Fury"] = 11.4, ['Full Break'] = 2.6,
 -- defaults for anything missing from aa_config.lua -> group_skillchain
 GSC_DEF = {
     enabled = true, min_players = 2, soon_tp = 750,
-    window_open = 3.0, window_close = 8.0, window_step = 1.0, window_min = 5.0, ws_lead = 1.0,
-    handoff_wait = 1.5, opener_wait = 2.0, max_steps = 5, plan_depth = 3, filler_wait_tp = 600,
+    window_open = 2.5, window_close = 10.0, window_step = 0, window_min = 8.0, ws_lead = 1.0,
+    handoff_wait = 1.5, opener_wait = 2.0, max_steps = 8, plan_depth = 3, filler_wait_tp = 600,
+    bank_hpp = 10, noshow_max = 3,
     once_per_mob = {['Great Axe'] = 'Full Break'},
     filler_jobs = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
     fillers = {},
@@ -4750,7 +4751,7 @@ GSC_DEF = {
     pools = {
         ['Great Axe']    = {'Upheaval', "Ukko's Fury", 'Full Break'},
         ['Great Katana'] = {'Tachi: Shoha', 'Tachi: Fudo', 'Tachi: Kasha'},
-        ['Sword']        = {'Savage Blade', 'Requiescat'},
+        ['Sword']        = {'Savage Blade'},   -- v4.71: Scrach has no Requiescat
         ['Great Sword']  = {'Resolution', 'Torcleaver', 'Ground Strike'},
         ['Scythe']       = {'Cross Reaper', 'Entropy', 'Insurgency'},
         ['Polearm']      = {'Stardiver', 'Impulse Drive', 'Drakesbane', "Camlann's Torment"},
@@ -4765,7 +4766,7 @@ GSC_DEF = {
 }
 GSC = {on = nil, chain = nil, jobs = {}, began = {}, pre_done = {}, pre_n = 0, mob = 0, mob_since = 0,
        fired_at = 0, said = {}, ids = {}, ids_at = -10, act_at = -10, act_val = false, act_last = nil,
-       learned = nil, learned_at = -100}
+       learned = nil, learned_at = -100, expect = nil, noshow = {}}
 
 function gsc_cfg(k)
     local c = AA_CFG and AA_CFG.group_skillchain
@@ -4863,10 +4864,16 @@ function gsc_is_filler(job, name)
     return false
 end
 -- the WS a player brings: pools[weapon]; yours only the ones you know
-function gsc_pool(weapon, isme)
+function gsc_pool(weapon, isme, id)
     local pools = gsc_cfg('pools')
     local list = (type(pools) == 'table' and weapon and pools[weapon]) or {}
-    if not isme then return list end
+    if not isme then   -- v4.71: minus WS this player passed on noshow_max times
+        local out, mx = {}, gsc_num('noshow_max')
+        for _, ws in ipairs(list) do
+            if mx <= 0 or (GSC.noshow[tostring(id) .. '|' .. ws] or 0) < mx then out[#out + 1] = ws end
+        end
+        return out
+    end
     local learned, out = gsc_learned(), {}
     for _, ws in ipairs(list) do if learned[ws] and GSC_WS[ws] then out[#out + 1] = ws end end
     if #out == 0 and weapon then   -- none from the pool: anything you know for this weapon
@@ -4895,7 +4902,7 @@ function gsc_members()
             out[#out + 1] = {id = mob.id, name = m.name, job = job, me = isme, weapon = weapon,
                 tp = (isme and pl.vitals and pl.vitals.tp) or m.tp or 0,
                 engaged = (isme and pl.status == 1) or ((not isme) and mob.status == 1),
-                filler = gsc_is_filler(job, m.name), pool = gsc_pool(weapon, isme)}
+                filler = gsc_is_filler(job, m.name), pool = gsc_pool(weapon, isme, mob.id)}
         end
     end
     return out, n
@@ -4951,7 +4958,7 @@ function gsc_sort(list)
     return list
 end
 -- who can continue this resonance: best WS per player, best first
-function gsc_continuers(mem, props)
+function gsc_continuers(mem, props, last_actor)
     local out, soon = {}, gsc_num('soon_tp')
     for _, m in ipairs(mem) do
         if m.engaged and m.tp >= soon then
@@ -4963,6 +4970,9 @@ function gsc_continuers(mem, props)
                     -- dead-end Darkness), plus a little for being ready now
                     local key = l * 10 + gsc_power(ws) - (m.filler and 5 or 0) + ((m.tp >= 1000) and 2 or 0)
                         + 0.8 * gsc_follow({r}, gsc_num('plan_depth') - 1, m.id, mem, 2)
+                    -- v4.71: the player who made the last WS goes after everyone else: the
+                    -- others see their TP a moment late and would go at the same time
+                    if last_actor and m.id == last_actor then key = key - 100 end
                     if not best or key > best.key then best = {m = m, ws = ws, res = r, key = key} end
                 end
             end
@@ -4975,7 +4985,9 @@ end
 function gsc_openers(mem)
     local out = {}
     for _, m in ipairs(mem) do
-        if m.engaged and not m.filler and m.tp >= 1000 then
+        -- v4.71: a teammate within soon_tp of 1000 keeps their turn -- you see their TP
+        -- a moment late (both opened in the same second 5 times on 11-18)
+        if m.engaged and not m.filler and (m.tp >= 1000 or (not m.me and m.tp >= gsc_num('soon_tp'))) then
             local best
             for _, ws in ipairs(m.pool) do
                 local key = gsc_follow(GSC_WS[ws], gsc_num('plan_depth'), m.id, mem, 1) + 0.1 * gsc_power(ws)
@@ -5045,7 +5057,7 @@ function gsc_tick()
         local live = #(c.props or {}) > 0 and (c.step or 1) < gsc_num('max_steps')
                      and now < close_t - gsc_num('ws_lead')
         if live then
-            local cands = gsc_continuers(mem, c.props)
+            local cands = gsc_continuers(mem, c.props, c.actor)
             for k, cd in ipairs(cands) do
                 if cd.m.me then
                     local go_at = open_t + (k - 1) * gsc_num('handoff_wait')
@@ -5058,6 +5070,7 @@ function gsc_tick()
                 end
             end
             if #cands > 0 then
+                if cands[1].m.tp >= 1000 then GSC.expect = {id = cands[1].m.id, ws = cands[1].ws, t = c.t} end
                 gsc_dbg('next', 'GSC: ' .. cands[1].m.name .. ' continues ' .. tostring(c.label) ..
                         ' with ' .. cands[1].ws .. ' -- holding.')
                 return 'wait'
@@ -5067,6 +5080,11 @@ function gsc_tick()
         if c.dead_at > idle_since then idle_since = c.dead_at end
     end
     if not ready or (now - GSC.fired_at) < 3.0 then return 'wait' end
+    -- v4.71: no new chain on a mob that is nearly dead -- keep the TP to open the next one
+    if gsc_num('bank_hpp') > 0 and t.hpp <= gsc_num('bank_hpp') and my_tp < 2000 then
+        gsc_dbg('bank', 'GSC: ' .. tostring(t.name or 'mob') .. ' at ' .. t.hpp .. '% -- keeping TP for the next mob.')
+        return 'wait'
+    end
     -- once per mob (Full Break) before chaining: players who still owe theirs
     -- on this mob open first (seen from the WS landing, so every AA agrees)
     local forced = {}
@@ -5150,12 +5168,27 @@ function gsc_on_action(act)
     if a1.message == 188 then return end   -- missed: no resonance
     local sc = a1.has_add_effect and GSC_SC_MSG[a1.add_effect_message] or nil
     local c = GSC.chain
+    -- v4.71: no-show learning -- the player we waited on used something else
+    GSC.noshow[act.actor_id .. '|' .. name] = nil
+    local ex = GSC.expect
+    if ex and c and ex.t == c.t then
+        if not (act.actor_id == ex.id and name == ex.ws) then
+            local k = ex.id .. '|' .. ex.ws
+            GSC.noshow[k] = (GSC.noshow[k] or 0) + 1
+            if GSC.noshow[k] == gsc_num('noshow_max') then
+                local _pm = windower.ffxi.get_mob_by_id and windower.ffxi.get_mob_by_id(ex.id)
+                info_msg('GSC: ' .. tostring(_pm and _pm.name or ex.id) .. ' passed on ' .. ex.ws .. ' ' .. GSC.noshow[k] ..
+                         'x -- not planning it for them this session.')
+            end
+        end
+        GSC.expect = nil
+    end
     if sc then
         local step = ((c and c.target == t1.id) and (c.step or 1) or 1) + 1
-        GSC.chain = {target = t1.id, t = now, props = {sc}, step = step, label = sc}
+        GSC.chain = {target = t1.id, t = now, props = {sc}, step = step, label = sc, actor = act.actor_id}
         debug_msg('GSC: ' .. name .. ' made ' .. sc .. ' (step ' .. step .. ').')
     else
-        GSC.chain = {target = t1.id, t = now, props = props, step = 1, label = name}
+        GSC.chain = {target = t1.id, t = now, props = props, step = 1, label = name, actor = act.actor_id}
     end
 end
 -- //aa gsc [on|off|auto]
@@ -9966,6 +9999,22 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.71 - Group skillchain tuning from the first v4.70 hour (Mark, 2026-11-18:
+        kill cycle 68s -> 46s, EP/h ~19.7k -> ~32k, no refused JAs; but
+        chains stopped at 2-3 steps and players collided).
+        * Skillchain window from 10h of logs: SCs formed 2-10s after the
+          previous WS at every step, no shrinking. window_open 3.0 -> 2.5,
+          window_close 8 -> 10, window_step 1 -> 0, window_min 5 -> 8,
+          max_steps 5 -> 8. v4.70 gave up on live chains after ~5-6s and
+          opened a new one over them.
+        * Collisions (two WS in the same second, the second wasted): a
+          teammate within soon_tp of 1000 keeps their opener turn; whoever
+          made the last WS continues only after everyone else.
+        * No-show learning: a teammate we waited on who uses something else
+          noshow_max (3) times loses that WS from our plan this session
+          (others held 1.5s each time for a Requiescat Scrach never used).
+        * bank_hpp (10): no new chain on a mob at or under 10% HP unless you
+          have 2000+ TP -- the TP opens the next mob instead.
 v4.70 - Group skillchains, JA timing, Berserk/Defender, rings, facing (Mark,
         2026-11-18 log review: ~20k EP/h, 65s kill cycle, chain broke at ~#21).
         * GROUP SKILLCHAIN (aa_config.lua -> group_skillchain, //aa gsc): with
