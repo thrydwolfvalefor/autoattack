@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.68'
+_addon.version  = '4.69'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -9239,6 +9239,18 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.69 - Pass-through commands now answer the sender (Mark, 2026-11-18:
+        "/t scracheebrat aa ws off" gave no reply). aa pull | assist |
+        ws | move | ds by /tell or /p:
+        * ws / move / ds run right away and every [AutoAttack] line they
+          print is sent back ("Scracheebrat: Weapon skills OFF (until aa
+          ws on or the addon is reloaded)."), at most 5 lines.
+        * pull / assist: "switched to PULL mode (was ASSIST)", "already in
+          PULL mode", "started PULL mode" or "couldn't start PULL mode".
+        * Tells answer the sender; /p answers in party, except on the
+          character that sent the /p line (it sees it in its own log).
+        * The addon command handler is now the global aa_addon_command
+          (still registered as the addon command).
 ]]
 
 
@@ -9480,7 +9492,9 @@ end
 AA_PARTY_MOD = aa_load_party()
 
 -- Call this when commands are received (e.g. "//aa assist" or "//aa pull")
-windower.register_event('addon command', function(command, ...)
+-- v4.69: a named global so aa_party.lua can run ws / move / ds directly and
+-- send the sender what it printed (registered as the addon command below).
+function aa_addon_command(command, ...)
     local args = {...}
     local subcmd = args[1] -- This will be 'ne', 'nw', 'east', etc., or nil
     command = command and command:lower() or 'help'
@@ -9662,7 +9676,8 @@ windower.register_event('addon command', function(command, ...)
         windower.add_to_chat(8, '[AutoAttack] v' .. _addon.version .. ' -- //aa assist | pull [n|s|e|w|...] | stop | move [off|pull|provoke|melee|target|n] | debug [0|1|2] | target [packet|native] | rings [reset] | ds [clear] | ws [off|on] | fullparty [on|off|fix] | dumpinv | id | pet')
         windower.add_to_chat(8, '[AutoAttack] party: //aa invite me|<name> [sync <n>] [leader <n>] [fight] | fight | stop | stack | follow [n] | unfollow | cancel | disband | leave | leader <n> | sync <n> | unsync | trusts [grp] | retr | retrust | rest | mount [n] | dismount | pass | lot | sneak | invis | warp | status | ping | party')
     end
-end)
+end
+windower.register_event('addon command', aa_addon_command)   -- v4.69
 
 
 

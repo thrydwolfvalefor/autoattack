@@ -12,7 +12,8 @@
     v4.67: your own party line runs on your own character too, however it
     was typed (/p, party chat mode, macro) -- caught from the party echo,
     v4.68: party lines go out at least 2s apart -- a reply right after your
-    own line was dropped by the game)
+    own line was dropped by the game,
+    v4.69: pull / assist / ws / move / ds answer the sender)
 
     Loaded by autoattack.lua. Lets your friends (party.friends in
     aa_config.lua) control this character's AutoAttack with /tell or party
@@ -32,7 +33,7 @@
       disband | leave | leader <name> | sync <name> | unsync
       trusts [group] | retr | retrust | rest | mount [name] | dismount | pass | lot
       status | ping | help | version | reload [all] | update [all|force|check] | rollback [all]
-      pull [dir] | assist | ws on|off | move <mode> | ds [clear]   (pass-through)
+      pull [dir] | assist | ws on|off | move <mode> | ds [clear]   (answer the sender, v4.69)
       //aa party   (typed only) -- friends, settings and what the party code is doing
 
     See README.md "Party commands" for the details.
@@ -1416,6 +1417,74 @@ end
 -- ---------------------------------------------------------------------------
 local PASS_THROUGH = {pull = true, assist = true, ws = true, move = true, ds = true}
 
+-- v4.69: pass-through commands answer the sender. ws / move / ds run here
+-- right away (aa_addon_command in autoattack.lua) and the [AutoAttack] lines
+-- they print go back to the sender; pull / assist say which mode we're in.
+-- A /p line from this character isn't answered here (its own log shows it).
+local function pass_through(ctx, c, w)
+    local quiet = ctx.src == 'party' and ctx.self
+    local args = {}
+    for i = 2, #w do args[#args + 1] = w[i] end
+    local function answer(lines)
+        if quiet then return end
+        local max, n = 5, 0
+        for _, l in ipairs(lines) do
+            n = n + 1
+            if n > max then
+                reply(ctx, my_name() .. ': (+' .. (#lines - max) .. ' more lines -- see my chat log)')
+                break
+            end
+            if n > 1 and ctx.src == 'tell' then coroutine.sleep(1) end   -- party lines are spaced by party_say
+            if #l > 110 then l = l:sub(1, 107) .. '...' end
+            reply(ctx, my_name() .. ': ' .. l)
+        end
+    end
+    if c == 'pull' or c == 'assist' then
+        local MODE = c:upper()
+        if aa_running() then
+            local was = tostring(aa_get_mode and aa_get_mode() or '?'):upper()
+            aa_set_mode(c)
+            say('switched to ' .. MODE .. ' mode (from ' .. tostring(ctx.sender) .. ').')
+            return answer({(was == MODE) and ('already in ' .. MODE .. ' mode.')
+                                          or ('switched to ' .. MODE .. ' mode (was ' .. was .. ').')})
+        end
+        send('aa ' .. table.concat(w, ' '))
+        coroutine.sleep(1.5)
+        if aa_running() then
+            return answer({'started ' .. tostring(aa_get_mode and aa_get_mode() or c):upper() .. ' mode' ..
+                ((#args > 0) and (' (' .. table.concat(args, ' ') .. ')') or '') .. '.'})
+        end
+        return answer({"couldn't start " .. MODE .. ' mode -- see my chat log.'})
+    end
+    if type(aa_addon_command) ~= 'function' then   -- older autoattack.lua
+        send('aa ' .. table.concat(w, ' '))
+        return answer({'ran "aa ' .. table.concat(w, ' ') .. '".'})
+    end
+    -- ws / move / ds: run it now and catch what it prints
+    local got, real = {}, windower.add_to_chat
+    windower.add_to_chat = function(mode, text, ...)
+        got[#got + 1] = tostring(text)
+        return real(mode, text, ...)
+    end
+    local ok, err = pcall(aa_addon_command, c, unpack(args))
+    windower.add_to_chat = real
+    local lines = {}
+    for _, t in ipairs(got) do
+        if not (t:find('^%[DEBUG') or t:find('^%[CMD%]')) then
+            t = t:gsub('^%[AutoAttack%]%s*', ''):gsub('^%[AA%]%s*', ''):gsub('//aa ', 'aa '):gsub('^%s+', '')
+            if t ~= '' then lines[#lines + 1] = t end
+        end
+    end
+    if not ok then
+        dbg('pass-through "' .. c .. '" error: ' .. tostring(err))
+        lines = {'"aa ' .. table.concat(w, ' ') .. '" failed -- see my chat log.'}
+        windower.add_to_chat(167, '[AA] "aa ' .. table.concat(w, ' ') .. '" failed: ' .. tostring(err))
+    elseif #lines == 0 then
+        lines = {'done: aa ' .. table.concat(w, ' ') .. '.'}
+    end
+    answer(lines)
+end
+
 -- ---------------------------------------------------------------------------
 -- v4.60: aa reload [all] -- reloads AutoAttack (//lua r autoattack).
 --   /tell aa reload   -> that character      /p aa reload -> every AA in the party
@@ -1701,12 +1770,7 @@ handle_command = function(ctx, text)
             for _, line in ipairs(HELP) do reply(ctx, line); coroutine.sleep(1) end
         end
     elseif PASS_THROUGH[c] then
-        if (c == 'pull' or c == 'assist') and aa_running() then
-            aa_set_mode(c)
-            say('switched to ' .. c:upper() .. ' mode (from ' .. tostring(ctx.sender) .. ').')
-        else
-            send('aa ' .. table.concat(w, ' '))
-        end
+        pass_through(ctx, c, w)   -- v4.69: answers the sender
     elseif ctx.src ~= 'party' then
         reply(ctx, 'Unknown command "' .. c .. '". Send "aa help".')
     end
