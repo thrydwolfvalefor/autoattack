@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.65'
+_addon.version  = '4.66'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -5332,14 +5332,41 @@ RING_REUSE_SECS = {
 }
 RING_KNOWN_RETRY = 120
 ring_refuse_level = ring_refuse_level or {}
+-- v4.66: rings not in RING_REUSE_SECS use the reuse time from res/items.lua
+-- (recast_delay: Echad / Trizek / Endorsement Ring = 7200s). Before, those had
+-- no known reuse, so a used ring got no lock and was swapped in and out every
+-- few minutes for its whole 2h recast.
+RING_SHORT_REUSE = 1800   -- v4.66: reuse at or under this keeps the 120s refusal retry
+RING_EQUIP_GAP   = 2      -- v4.66: min seconds between two ring /equip commands
+ring_last_equip_clock = ring_last_equip_clock or 0
 function ring_reuse_secs(item_res, name)
-    return RING_REUSE_SECS[item_res.en] or RING_REUSE_SECS[name]
+    local s = RING_REUSE_SECS[item_res.en] or RING_REUSE_SECS[name]
+    if s then return s end
+    local rd = tonumber(item_res.recast_delay)
+    if rd and rd > 0 then return rd end
+    return nil
 end
 function ring_wait_after_refusal(ring_id, item_res, name)
-    if ring_reuse_secs(item_res, name) then return RING_KNOWN_RETRY end
+    local reuse = ring_reuse_secs(item_res, name)
+    if reuse and reuse <= RING_SHORT_REUSE then return RING_KNOWN_RETRY end
     local lvl = math.min((ring_refuse_level[ring_id] or 0) + 1, #RING_REFUSE_BACKOFF)
     ring_refuse_level[ring_id] = lvl
-    return RING_REFUSE_BACKOFF[lvl]
+    local wait = RING_REFUSE_BACKOFF[lvl]
+    if reuse and reuse < wait then wait = reuse end   -- v4.66: never longer than the ring's reuse
+    return wait
+end
+-- v4.66: ring /equip with a gap. The default-ring restore and the next ring's
+-- /equip went out 3ms apart (2026-11-18 00:57:34 pol.exe crash, Mythrandiir,
+-- right after 'equip ring1 Karieyh ring +1' + 'equip ring1 Echad Ring').
+function ring_equip(name, no_wait)
+    local wait = RING_EQUIP_GAP - (os.clock() - ring_last_equip_clock)
+    if wait > 0 and not no_wait then
+        debug_msg(string.format('RINGS: %.1fs gap before /equip "%s".', wait, tostring(name)))
+        aa_loop_beat = os.clock()
+        coroutine.sleep(wait)
+    end
+    cmd('input /equip ring1 "' .. tostring(name) .. '"')
+    ring_last_equip_clock = os.clock()
 end
 ring_retry_at = ring_retry_at or {}
 ring_warned   = ring_warned or {}   -- [ring_id] = last note key, so each state logs once
@@ -5526,7 +5553,7 @@ function check_and_use_ring(name, use_lock)
     local buffs_before = exp_cp_buffs()
 
     debug_msg('RINGS: using ' .. name .. ' (' .. charges .. '/' .. tostring(max_chg) .. ' charges).')
-    cmd('input /equip ring1 "' .. tostring(name) .. '"')
+    ring_equip(name)   -- v4.66: waits RING_EQUIP_GAP after the last ring /equip
     coroutine.sleep(11)
     -- v4.07: watch for the game refusing the /item ("...A command error occurred.")
     -- v4.11: never /item within RING_KILL_HOLD s of a kill / dead cursor
@@ -5545,7 +5572,7 @@ function check_and_use_ring(name, use_lock)
                 info_msg(string.format('RINGS: /item "%s" held %.0fs (kills keep coming) -- skipped, retry in %ds.',
                     name, os.clock() - _h0, RING_HOLD_RETRY))
                 if _dr and _dr ~= '' and _dr ~= tostring(name) then
-                    cmd('input /equip ring1 "' .. _dr .. '"')
+                    ring_equip(_dr, true)   -- v4.66: restore now, stamp the gap
                 end
                 ring_retry_at[ring_id] = os.time() + RING_HOLD_RETRY
                 return false
@@ -5567,7 +5594,7 @@ function check_and_use_ring(name, use_lock)
     -- This is the only moment ring1 is knowingly not the default ring (v2.47).
     local default_ring = current_config.ring_config and current_config.ring_config.default_ring
     if default_ring and default_ring ~= '' and default_ring ~= tostring(name) then
-        cmd('input /equip ring1 "' .. default_ring .. '"')
+        ring_equip(default_ring, true)   -- v4.66: restore now, stamp the gap
     end
 
     -- v4.07: the client itself refused the /item (no packet was sent), so the
@@ -5604,7 +5631,10 @@ function check_and_use_ring(name, use_lock)
         ring_fail_count[ring_id] = nil
         ring_warned[ring_id] = nil
         ring_refuse_level[ring_id] = nil
-        local left_now = (a_chg and a_chg < charges) and a_chg or (charges - 1)
+        -- v4.66: buff-only confirmation (charge count unchanged, e.g. 1/1 rings
+        -- like Echad) keeps the real count -- saving charges-1 made the next
+        -- read look like 'charges went up' and cleared the reuse lock.
+        local left_now = (a_chg and a_chg < charges) and a_chg or charges
         settings.ring_charges[ring_id] = left_now
         -- v4.08: no 2h lock after a use; the buff check holds it until the buff wears off.
         -- v4.09: a ring with a known reuse time waits exactly that long.
@@ -9171,6 +9201,23 @@ v4.65 - Safe start + rollback, aa update check / aa version, richer ping,
         * README: "Installation & updates" section (first install, aa
           update vs aa reload, config safety, GitHub cache, failed update,
           rollback).
+v4.66 - Ring swap fix (Mark, 2026-11-18: pol.exe crash 00:57:34 on
+        Mythrandiir, ntdll 0xc0000374, log ends on two ring /equip 3ms apart).
+        * Echad / Trizek / Endorsement Ring were used at 23:29-23:31 but got no
+          reuse lock (only Emperor Band had a known reuse), so they were
+          swapped in every few minutes for their whole 2h recast (68 ring
+          /equip in 70 min, 0 uses). Rings not in RING_REUSE_SECS now use
+          recast_delay from res/items.lua (these three = 7200s): after a use
+          the lock is saved and survives reloads ('used. ..., next use in 120m').
+        * A ring with a long reuse (> RING_SHORT_REUSE 1800s) that fails or is
+          refused uses the 10m-2h backoff, capped at its reuse. Short-reuse
+          rings (Emperor Band) keep the 120s retry.
+        * Buff-only confirmed use saves the real charge count (was charges-1,
+          which read as 'charges went up' next time and cleared the lock).
+        * New ring_equip(): at least RING_EQUIP_GAP (2s) between ring /equip
+          commands. The default-ring restore goes out at once; the next
+          ring's /equip waits ('RINGS: 2.0s gap before /equip ...').
+        * extdata next_use_time is still NOT used (unreliable, see v4.05).
 ]]
 
 
