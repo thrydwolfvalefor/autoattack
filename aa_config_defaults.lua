@@ -203,6 +203,74 @@ local dread_spikes = {enabled = true,
 	}
 
 -- ---------------------------------------------------------------------------
+-- group_skillchain  (v4.70) -- with another player in the party, every
+--   AutoAttack plans the party's weapon skills together and job_config's
+--   ws_list is paused (it runs again when you are the only player).
+--   enabled        true | false (//aa gsc on|off|auto for this session)
+--   min_players    players in the party (you included) to turn it on
+--   soon_tp        a player with this much TP counts as "nearly ready"
+--   window_open / window_close / window_step / window_min
+--                  skillchain window (s after a WS lands): opens at
+--                  window_open, closes window_close minus window_step per
+--                  step, never under window_min
+--   ws_lead        s before the window closes that a WS is still sent
+--   handoff_wait   s the best continuer gets before the next best goes
+--   opener_wait    s the best opener gets before the next best opens
+--   max_steps      longest chain before a new one is opened
+--   plan_depth     steps looked ahead when picking an opener
+--   once_per_mob   [weapon] = WS used once on each new mob before chaining
+--   filler_jobs    jobs that magic burst first and only WS when no melee is
+--                  close (filler_wait_tp) or a chain needs them; fillers =
+--                  {'Name'} marks players by name too
+--   job_weapons    [job] = weapon, for the other players (yours is read from
+--                  your main hand); weapons = {Name = 'weapon'} is used only
+--                  when a player's job isn't known yet
+--   pools          [weapon] = WS each player with that weapon brings (yours
+--                  only the ones you know); first one isn't preferred --
+--                  the plan picks
+--   power          {['WS name'] = damage} -- picks the harder-hitting closer
+--                  (built in: Upheaval 12.8, Ukko's Fury 11.4, Shoha 7.8 ...)
+-- ---------------------------------------------------------------------------
+local group_skillchain = {enabled = true,
+	min_players    = 2,
+	soon_tp        = 750,
+	window_open    = 3.0,
+	window_close   = 8.0,
+	window_step    = 1.0,
+	window_min     = 5.0,
+	ws_lead        = 1.0,
+	handoff_wait   = 1.5,
+	opener_wait    = 2.0,
+	max_steps      = 5,
+	plan_depth     = 3,
+	filler_wait_tp = 600,
+	once_per_mob   = {['Great Axe'] = 'Full Break'},
+	filler_jobs    = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
+	fillers        = {},
+	weapons        = {Shadowhammer = 'Great Axe', Mythrandiir = 'Great Katana', Scracheebrat = 'Sword'},
+	job_weapons    = {WAR = 'Great Axe', SAM = 'Great Katana', RDM = 'Sword', PLD = 'Sword', BLU = 'Sword',
+	                  COR = 'Sword', DRK = 'Scythe', DRG = 'Polearm', MNK = 'Hand-to-Hand', PUP = 'Hand-to-Hand',
+	                  THF = 'Dagger', DNC = 'Dagger', BRD = 'Dagger', RNG = 'Dagger', NIN = 'Katana',
+	                  WHM = 'Club', GEO = 'Club', BST = 'Axe', RUN = 'Great Sword',
+	                  BLM = 'Staff', SCH = 'Staff', SMN = 'Staff'},
+	pools = {
+		['Great Axe']    = {'Upheaval', "Ukko's Fury", 'Full Break'},
+		['Great Katana'] = {'Tachi: Shoha', 'Tachi: Fudo', 'Tachi: Kasha'},  -- 'Tachi: Rana' (4.2k, Fragmentation chains only)
+		['Sword']        = {'Savage Blade', 'Requiescat'},  -- add 'Chant du Cygne' / 'Knights of Round' / 'Death Blossom' if known
+		['Great Sword']  = {'Resolution', 'Torcleaver', 'Ground Strike'},
+		['Scythe']       = {'Cross Reaper', 'Entropy', 'Insurgency'},
+		['Polearm']      = {'Stardiver', 'Impulse Drive', 'Drakesbane', "Camlann's Torment"},
+		['Dagger']       = {"Rudra's Storm", 'Evisceration', 'Exenterator'},
+		['Katana']       = {'Blade: Shun', 'Blade: Hi', 'Blade: Ku'},
+		['Hand-to-Hand'] = {'Victory Smite', 'Shijin Spiral', 'Asuran Fists', 'Howling Fist'},
+		['Club']         = {'Black Halo', 'Realmrazer', 'Judgment'},
+		['Axe']          = {'Decimation', 'Ruinator', 'Cloudsplitter'},
+		['Staff']        = {'Shattersoul', 'Cataclysm', 'Retribution'},
+	},
+	power = {},   -- e.g. {['Savage Blade'] = 9.0} for a stronger sword
+	}
+
+-- ---------------------------------------------------------------------------
 -- job_config  -- one block per main job: ['WAR'] = { ... }, ['THF'] = { ... }
 --   The block for your current main job is used (no block -> WAR's, with a
 --   warning). To add a job, copy a block and rename the key. Sections:
@@ -215,12 +283,15 @@ local dread_spikes = {enabled = true,
 --               {name='...', max_dist=yalms}
 --   abilities   {name, target='<me>'|'<t>', min_time=seconds between uses,
 --               tp=min TP, buff_id / buff_any = skip while that buff is on,
---               uses_per_mob}
+--               uses_per_mob, yield_to = {'Berserk'} (v4.70: hold while that
+--               JA is up or ready within yield_secs, default 30)}
 --   magic       {name, target, type='buff'|'buff_party'|'buff_party_mages'|
 --               'debuff'|'damage'|'heal', min_time,
 --               buff_id / buff_any}
 --   ws_list     enabled, then named lists ["Normal"] = { {name, uses,
---               min_time, SA, LockOut=1 (hold for the next WS) / 0, min_tp} }
+--               min_time, SA, LockOut=1 (hold for the next WS) / 0, min_tp,
+--               once_per_mob = true (v4.70: once on each mob)} }
+--               -- paused while group_skillchain is active
 --               -- ws_mode.type above picks the list
 --   ring_config enabled, default_ring, exp_rings / cp_rings, emporox_ring
 --   item_food   enabled, then {name, target, min_time, uses_per_mob, buff_id}
@@ -357,10 +428,10 @@ local job_config = {
         },
         abilities = {enabled = true, -- set to true to enable using of abilities
 			-- {name='Provoke', target='<t>', min_time=30, uses_per_mob=99}, 			-- 30s recast
-			{name='Berserk', target='<me>', tp=0, min_time=250, buff_any={56,58,64} }, 	-- 4:10 (250s) recast	WEAKENS	buff_id 56
+			{name='Berserk', target='<me>', tp=0, min_time=250, buff_id=56}, 			-- 4:10 (250s) recast. v4.70: buff_id=56 (was buff_any={56,58,64}: Aggressor stacks with Berserk)
 			{name='Warcry', target='<me>', tp=0, min_time=300, buff_id=68}, 			-- 5 minute recast		
-			{name='Aggressor', target='<me>', tp=0, min_time=300, buff_any={56,58,64}}, -- 5 minute recast		WEAKENS buff_id 58
-			{name='Defender', target='<me>', tp=0, min_time=180, buff_id=57}, 			-- 3 minute recast
+			{name='Aggressor', target='<me>', tp=0, min_time=300, buff_id=58}, 			-- 5 minute recast. v4.70: buff_id=58 (was buff_any={56,58,64}: Berserk stacks with Aggressor)
+			{name='Defender', target='<me>', tp=0, min_time=180, buff_id=57, yield_to={'Berserk'}}, -- 3 minute recast. v4.70: Defender and Berserk cancel each other -- held while Berserk is up or ready within 30s
 			{name="Warrior's Charge", target='<me>', min_time=300, buff_id=340}, 		-- 5 minute recast
 			{name='Retaliation', target='<me>', min_time=180, buff_id=405},				-- 3 minute recast, 	Movement Speed -12%
 			{name='Restraint', target='<me>', min_time=600, buff_id=435}, 				-- 10 minute recast
@@ -394,7 +465,7 @@ local job_config = {
 				-- GA Ultimate Radiance
 				-- Requires Aoenic Aftermath for actual 4 step SC. Intead it is double light
 				-- ~3500-9900 Team DPS Apex Crabs, WAR 48, koru, joac, SHANT, monb, qualtada) double pull, SC Lockout
-				{name='Full Break', uses=1, min_time=3, SA=0, LockOut=1, min_tp=1000},
+				{name='Full Break', uses=1, min_time=3, SA=0, LockOut=1, min_tp=1000, once_per_mob=true},  -- v4.70: once per mob, then the 3 below
 				{name='Upheaval', uses=1, min_time=3, SA=0, LockOut=1, min_tp=1000},		-- Fusion
 				{name="Ukko's Fury", uses=1, min_time=3, SA=0, LockOut=1, min_tp=1000},	-- Light++
 				{name='Upheaval', uses=1, min_time=3, SA=0, LockOut=0, min_tp=1000},	},	-- Light
@@ -1708,10 +1779,10 @@ local job_config = {
 		},
 		abilities = {enabled = true, -- set to true to enable using of abilities
 			-- {name='Provoke', target='<t>', min_time=30, uses_per_mob=99}, 			-- 30s recast
-			{name='Berserk', target='<me>', tp=0, min_time=250, buff_any={56,58,64} }, 	-- 4:10 (250s) recast	WEAKENS	buff_id 56
+			{name='Berserk', target='<me>', tp=0, min_time=250, buff_id=56}, 			-- 4:10 (250s) recast. v4.70: buff_id=56 (was buff_any={56,58,64}: Aggressor stacks with Berserk)
 			{name='Warcry', target='<me>', tp=0, min_time=300, buff_id=68}, 			-- 5 minute recast		
-			{name='Aggressor', target='<me>', tp=0, min_time=300, buff_any={56,58,64}}, -- 5 minute recast		WEAKENS buff_id 58
-			{name='Defender', target='<me>', tp=0, min_time=180, buff_id=57}, 			-- 3 minute recast
+			{name='Aggressor', target='<me>', tp=0, min_time=300, buff_id=58}, 			-- 5 minute recast. v4.70: buff_id=58 (was buff_any={56,58,64}: Berserk stacks with Aggressor)
+			{name='Defender', target='<me>', tp=0, min_time=180, buff_id=57, yield_to={'Berserk'}}, -- 3 minute recast. v4.70: Defender and Berserk cancel each other -- held while Berserk is up or ready within 30s
 			{name="Warrior's Charge", target='<me>', min_time=300, buff_id=340}, 		-- 5 minute recast
 			{name='Retaliation', target='<me>', min_time=180, buff_id=405},				-- 3 minute recast, 	Movement Speed -12%
 			{name='Restraint', target='<me>', min_time=600, buff_id=435}, 				-- 10 minute recast
@@ -1815,6 +1886,7 @@ return {
     ws_mode                  = ws_mode,
     heal_buff_outside_battle = heal_buff_outside_battle,
     move_to_target           = move_to_target,
+    group_skillchain         = group_skillchain,
     job_config               = job_config,
     dread_spikes             = dread_spikes,
     party                    = party,

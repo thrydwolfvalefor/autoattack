@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.69'
+_addon.version  = '4.70'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -1510,6 +1510,11 @@ function closer_target_check(pull_dist)
         tostring(pick.name), pick.id, pd, why, tostring(t.name), td))
     return true
 end
+-- v4.70: face the hot-switched mob if it is still our live target
+function hs_reface(id)
+    local t = windower.ffxi.get_mob_by_target('t')
+    if t and t.id == id and t.hpp and t.hpp > 0 then face_mob_direct(t) end
+end
 function hot_switch_start(dead_id)
     if not HOT_SWITCH or not auto_attack or autoattack_type ~= 'pull' then return end
     if dead_id == hot_switch_dead then return end   -- several defeat msgs, one switch
@@ -1519,6 +1524,10 @@ function hot_switch_start(dead_id)
         local ok, want = pcall(hot_switch_send, dead_id)
         if not ok then info_msg('HOT-SWITCH error: ' .. tostring(want)); want = nil end
         if not want then hot_switch_until = 0; return end
+        -- v4.70: turn again once the switch has gone through (2026-11-18:
+        -- "Unable to see" 0.5-1s after hot switches)
+        coroutine.schedule(function() pcall(hs_reface, want) end, 0.4)
+        coroutine.schedule(function() pcall(hs_reface, want) end, 1.0)
         if HOT_SWITCH_PROVOKE then   -- v4.40: Provoke it on the next loop tick
             hs_provoke.id = want; hs_provoke.until_t = os.clock() + HOT_SWITCH_PROVOKE_WINDOW
         end
@@ -2429,6 +2438,86 @@ function opener_ready(target)
     return false
 end
 
+-- =========================================================================
+-- v4.70: JOB ABILITY TIMING AND CONFLICTS
+-- * no JA within JA_AFTER_WS_GAP s of our own WS: on 2026-11-18 every one of
+--   Myth's 193 "Unable to use job ability" came 3.0-3.9s after his WS, and
+--   every JA tried 4s+ after a WS went off
+-- * a JA the game refuses gets its min_time back (it used to wait the full
+--   recast, e.g. Berserk 250s); after JA_FAIL_MAX refusals in a row within
+--   60s the normal min_time wait applies again
+-- * JA_STACKS: buff_any IDs ignored because the buffs stack (Berserk and
+--   Aggressor kept skipping each other)
+-- * JA_YIELD / an entry's yield_to = {'Berserk'}: hold this JA while that one
+--   is up or ready within yield_secs (default JA_YIELD_SECS) -- Defender and
+--   Berserk cancel each other, so Defender only fills the gap between Berserks
+-- Globals on purpose (main chunk is at the local / upvalue limit).
+-- =========================================================================
+JA_AFTER_WS_GAP = 4.0
+JA_TRY          = {name = nil, at = 0, last = 0, uses = 0}
+JA_FAILS        = {}
+JA_FAIL_MAX     = 3
+JA_BUFF_IDS     = {Berserk = 56, Defender = 57, Aggressor = 58, ['Last Resort'] = 64, Warcry = 68}
+JA_STACKS       = {Berserk = {[58] = true}, Aggressor = {[56] = true}}
+JA_YIELD        = {Defender = {'Berserk'}}
+JA_YIELD_SECS   = 30
+ja_yield_said   = {}
+function ja_stacks(name, bid)
+    local st = JA_STACKS[name]
+    return st ~= nil and st[bid] == true
+end
+function ja_yield_skip(entry, buffs, recasts, avail)
+    local list = entry.yield_to or JA_YIELD[entry.name]
+    if type(list) ~= 'table' then return false end
+    for _, other in ipairs(list) do
+        local conf
+        for _, e in ipairs(current_config.abilities or {}) do
+            if type(e) == 'table' and e.name == other then conf = e; break end
+        end
+        if conf then   -- only yield to a JA this job's config really uses
+            local bid = conf.buff_id or JA_BUFF_IDS[other]
+            local state, why
+            if bid and table.contains(buffs, bid) then
+                state, why = 'up', other .. ' is up'
+            else
+                local d = res_with('job_abilities', 'name', other)
+                if d and d.recast_id and table.contains(avail, d.id) then
+                    local rc = recasts[d.recast_id]
+                    if rc and rc <= (entry.yield_secs or JA_YIELD_SECS) then
+                        state, why = 'soon', other .. ' is ready in ' .. math.floor(rc) .. 's'
+                    end
+                end
+            end
+            if state then
+                if ja_yield_said[entry.name] ~= state then
+                    ja_yield_said[entry.name] = state
+                    debug_msg('JA: holding ' .. entry.name .. ' -- ' .. why .. ' (they cancel each other).')
+                end
+                return true
+            end
+        end
+    end
+    ja_yield_said[entry.name] = nil
+    return false
+end
+-- "Unable to use job ability." right after use_job_abilities sent one
+function ja_failed_text()
+    if not JA_TRY.name or (os.clock() - JA_TRY.at) > 2.5 then return end
+    local n, now = JA_TRY.name, os.clock()
+    JA_TRY.name = nil
+    local f = JA_FAILS[n]
+    if not f or now - f.t > 60 then f = {n = 0, t = now}; JA_FAILS[n] = f end
+    f.n = f.n + 1
+    if f.n <= JA_FAIL_MAX then
+        ability_last_used[n] = JA_TRY.last
+        ability_use_tracker[n] = JA_TRY.uses
+        debug_msg('JA: ' .. n .. ' refused ("Unable to use job ability") -- trying again after the gap (' ..
+                  f.n .. '/' .. JA_FAIL_MAX .. ').')
+    else
+        debug_msg('JA: ' .. n .. ' refused ' .. f.n .. 'x in a row -- waiting its normal min_time.')
+    end
+end
+
 function use_job_abilities()
     if not current_config.abilities then return end
     if current_config.abilities.enabled == false then return end  
@@ -2454,6 +2543,8 @@ function use_job_abilities()
     -- v4.14: face the mob first; no JA on the tick we turn
     local opener = opener_ready(target)
     if opener == 'faced' then return false end
+    -- v4.70: no JA right after our own WS (animation lock -> "Unable to use job ability")
+    if (os.clock() - last_ws_time) < JA_AFTER_WS_GAP then return false end
 
     for i, entry in ipairs(current_config.abilities) do
         if not entry or not entry.name then break end
@@ -2478,11 +2569,15 @@ function use_job_abilities()
 			end
 			if not has_buff and entry.buff_any then
 				for _, bid in ipairs(entry.buff_any) do
-					if table.contains(player.buffs, bid) then
+					if table.contains(player.buffs, bid) and not ja_stacks(entry.name, bid) then  -- v4.70
 						has_buff = true
 						break
 					end
 				end
+			end
+			-- v4.70: hold a JA that would cancel a stronger one (Defender -> Berserk)
+			if not has_buff and ja_yield_skip(entry, player.buffs, abil_recasts, available_abilities) then
+				has_buff = true
 			end
 
             -- Standard checks
@@ -2527,6 +2622,7 @@ function use_job_abilities()
                 if entry.name == 'Provoke' and autoattack_type == 'assist' then
                     -- debug_msg('PROVOKE: Skipped in ASSIST mode.')
                 else
+                JA_TRY.name, JA_TRY.at, JA_TRY.last, JA_TRY.uses = entry.name, os.clock(), last_call, current_uses  -- v4.70
                 ability_last_used[entry.name] = current_time
                 ability_use_tracker[entry.name] = current_uses + 1
                 last_ability_time = os.clock()  -- track for ring equip lockout
@@ -3991,6 +4087,7 @@ function engaged_pull_logic(pull_command, pull_dist, pull_wait, method)
             hs_provoke.id = 0
             local _mr = ps.reach or (3.0 + (t.model_size or 2.0))
             info_msg('HOT-SWITCH-PROVOKE: ' .. (t.name or '?') .. ' at ' .. string.format('%.1f', dist) .. 'y -- Provoke.')
+            face_mob_direct(t)   -- v4.70: turn now (face('f') may land after the Provoke)
             face('f')
             if try_provoke_pull(t) then
                 if dist > _mr then ps.last_pull = os.clock(); ps.pulls = ps.pulls + 1 end
@@ -4352,6 +4449,9 @@ end
 
 
 
+ws_once_done = {}   -- v4.70: [mob id|WS name] = true for once_per_mob entries
+ws_once_n = 0
+
 function use_weapon_skill()
     if not current_config.ws_list then return false end
     if current_config.ws_list.enabled == false then return false end
@@ -4375,6 +4475,12 @@ function use_weapon_skill()
 
     -- v4.32: no weapon skills while the target has Dread Spikes
     if ds_state and ds_state.on then
+        ws_sc_locked = false
+        return false
+    end
+
+    -- v4.70: group skillchain is planning the party's weapon skills
+    if gsc_active() then
         ws_sc_locked = false
         return false
     end
@@ -4404,6 +4510,20 @@ function use_weapon_skill()
         if not current_ws then return false end
     end
     if not current_ws.name then return false end  -- v3.98: malformed ws_list entry
+
+    -- v4.70: once_per_mob = true -> that entry fires once on each mob (Full Break opener)
+    do
+        local _t = windower.ffxi.get_mob_by_target('t')
+        local _tries = 0
+        while current_ws and current_ws.once_per_mob and _t and _t.id
+              and ws_once_done[_t.id .. '|' .. tostring(current_ws.name)] and _tries < #active_list do
+            ws_index = ws_index % #active_list + 1
+            current_ws_use_count = 0
+            current_ws = active_list[ws_index]
+            _tries = _tries + 1
+        end
+        if not current_ws or not current_ws.name or (current_ws.once_per_mob and _tries >= #active_list) then return false end
+    end
 
     -- ws_mode.lockout == "false" suppresses SC chain locking entirely.
     local lockout_enabled = not (ws_mode and ws_mode.lockout == "false")
@@ -4446,6 +4566,12 @@ function use_weapon_skill()
     local p_ws = windower.ffxi.get_player()
     if not p_ws or not p_ws.vitals or p_ws.vitals.hp <= 0 then return false end
     info_msg('Using WS (' .. (current_ws_use_count + 1) .. '/' .. (current_ws.uses or 1) .. '): ' .. current_ws.name)
+    face_mob_direct(target)   -- v4.70: turn first ("You cannot see" right after engaging / a switch)
+    if current_ws.once_per_mob and target.id then   -- v4.70
+        ws_once_n = ws_once_n + 1
+        if ws_once_n > 400 then ws_once_done, ws_once_n = {}, 1 end
+        ws_once_done[target.id .. '|' .. current_ws.name] = true
+    end
     local ws_cmd = 'input /ws "' .. current_ws.name .. '" <t>'
     cmd(ws_cmd)
     
@@ -4483,6 +4609,581 @@ function use_weapon_skill()
 end
 
 
+
+
+-- =========================================================================
+-- v4.70: GROUP SKILLCHAIN  (aa_config.lua -> group_skillchain)
+-- With another player in the party, each AutoAttack plans the party's weapon
+-- skills together and job_config's ws_list is not used:
+--   * the chain comes from what the party really does: every party member's
+--     and Trust's WS on our target, and the skillchain it made
+--   * a live chain is continued by whoever adds the most: skillchain level,
+--     the harder-hitting closer, and what can still follow it (melee before
+--     fillers); if they don't go, the next best gets a turn handoff_wait s later
+--   * no live chain: the opener whose WS leads to the best 2-4 step chain
+--     with players who are ready (or nearly: soon_tp) goes first; the next
+--     best opener gets a turn opener_wait s later
+--   * once_per_mob: a WS used once on each new mob before it chains
+--     (Great Axe: Full Break)
+--   * filler_jobs (RDM, BLM ...): magic burst first; WS to keep a chain going
+--     only when no melee can, otherwise only while the melee are far from
+--     1000 TP (or its own TP is near the cap)
+-- Every AutoAttack works out the same plan from the party list, jobs (party
+-- packets 0x0DD / 0x0DF), TP and the config -- no messages between them.
+-- //aa gsc [on|off|auto] (this session) -- no argument shows the plan inputs.
+-- Globals on purpose (main chunk is at the local / upvalue limit).
+-- =========================================================================
+GSC_LEVEL = {Liquefaction = 1, Impaction = 1, Detonation = 1, Scission = 1, Reverberation = 1,
+             Induration = 1, Compression = 1, Transfixion = 1,
+             Fusion = 2, Fragmentation = 2, Gravitation = 2, Distortion = 2,
+             Light = 3, Darkness = 3}
+-- [resonance on the mob][property of the next WS] = skillchain
+GSC_COMBO = {
+    Liquefaction  = {Scission = 'Scission', Impaction = 'Fusion'},
+    Impaction     = {Liquefaction = 'Liquefaction', Detonation = 'Detonation'},
+    Detonation    = {Scission = 'Scission', Compression = 'Gravitation'},
+    Scission      = {Liquefaction = 'Liquefaction', Detonation = 'Detonation', Reverberation = 'Reverberation'},
+    Reverberation = {Impaction = 'Impaction', Induration = 'Induration'},
+    Induration    = {Compression = 'Compression', Impaction = 'Impaction', Reverberation = 'Fragmentation'},
+    Compression   = {Transfixion = 'Transfixion', Detonation = 'Detonation'},
+    Transfixion   = {Compression = 'Compression', Reverberation = 'Reverberation', Scission = 'Distortion'},
+    Fusion        = {Gravitation = 'Gravitation', Fragmentation = 'Light'},
+    Fragmentation = {Distortion = 'Distortion', Fusion = 'Light'},
+    Gravitation   = {Fragmentation = 'Fragmentation', Distortion = 'Darkness'},
+    Distortion    = {Fusion = 'Fusion', Gravitation = 'Darkness'},
+    Light         = {Light = 'Light'},
+    Darkness      = {Darkness = 'Darkness'},
+}
+-- skillchain add-effect messages
+GSC_SC_MSG = {[288] = 'Light', [289] = 'Darkness', [290] = 'Gravitation', [291] = 'Fragmentation',
+    [292] = 'Distortion', [293] = 'Fusion', [294] = 'Compression', [295] = 'Liquefaction',
+    [296] = 'Induration', [297] = 'Reverberation', [298] = 'Transfixion', [299] = 'Scission',
+    [300] = 'Detonation', [301] = 'Impaction',
+    [385] = 'Light', [386] = 'Darkness', [387] = 'Gravitation', [388] = 'Fragmentation',
+    [389] = 'Distortion', [390] = 'Fusion', [391] = 'Compression', [392] = 'Liquefaction',
+    [393] = 'Induration', [394] = 'Reverberation', [395] = 'Transfixion', [396] = 'Scission',
+    [397] = 'Detonation', [398] = 'Impaction', [767] = 'Light', [768] = 'Darkness',
+    [769] = 'Light', [770] = 'Darkness'}
+-- weapon skill -> skillchain properties
+GSC_WS = {
+    -- Great Axe
+    ['Upheaval'] = {'Fusion', 'Compression'}, ["Ukko's Fury"] = {'Light', 'Fragmentation'},
+    ['Full Break'] = {'Distortion'}, ['Steel Cyclone'] = {'Distortion', 'Detonation'},
+    ["King's Justice"] = {'Fragmentation', 'Scission'}, ['Fell Cleave'] = {'Scission', 'Detonation'},
+    ['Metatron Torment'] = {'Light', 'Fusion'}, ['Raging Rush'] = {'Induration', 'Reverberation'},
+    ['Armor Break'] = {'Impaction'}, ['Weapon Break'] = {'Impaction'}, ['Shield Break'] = {'Impaction'},
+    ['Sturmwind'] = {'Reverberation', 'Scission'}, ['Iron Tempest'] = {'Scission'}, ['Keen Edge'] = {'Compression'},
+    -- Great Katana
+    ['Tachi: Shoha'] = {'Fragmentation', 'Compression'}, ['Tachi: Fudo'] = {'Light', 'Distortion'},
+    ['Tachi: Kasha'] = {'Fusion', 'Compression'}, ['Tachi: Rana'] = {'Gravitation', 'Induration'},
+    ['Tachi: Gekko'] = {'Distortion', 'Reverberation'}, ['Tachi: Yukikaze'] = {'Induration', 'Detonation'},
+    ['Tachi: Kaiten'] = {'Light', 'Fragmentation'}, ['Tachi: Ageha'] = {'Compression', 'Scission'},
+    ['Tachi: Jinpu'] = {'Scission', 'Detonation'}, ['Tachi: Koki'] = {'Reverberation', 'Impaction'},
+    ['Tachi: Goten'] = {'Transfixion', 'Impaction'}, ['Tachi: Kagero'] = {'Liquefaction'},
+    ['Tachi: Enpi'] = {'Transfixion', 'Scission'}, ['Tachi: Hobaku'] = {'Induration'},
+    -- Sword
+    ['Savage Blade'] = {'Fragmentation', 'Scission'}, ['Chant du Cygne'] = {'Light', 'Distortion'},
+    ['Requiescat'] = {'Gravitation', 'Scission'}, ['Knights of Round'] = {'Light', 'Fusion'},
+    ['Death Blossom'] = {'Fragmentation', 'Distortion'}, ['Red Lotus Blade'] = {'Liquefaction', 'Detonation'},
+    ['Circle Blade'] = {'Reverberation', 'Impaction'}, ['Vorpal Blade'] = {'Scission', 'Impaction'},
+    ['Swift Blade'] = {'Gravitation'}, ['Fast Blade'] = {'Scission'}, ['Burning Blade'] = {'Liquefaction'},
+    ['Flat Blade'] = {'Impaction'}, ['Shining Blade'] = {'Scission'}, ['Seraph Blade'] = {'Scission'},
+    -- Great Sword
+    ['Resolution'] = {'Fragmentation', 'Scission'}, ['Torcleaver'] = {'Light', 'Distortion'},
+    ['Ground Strike'] = {'Fragmentation', 'Distortion'}, ['Scourge'] = {'Light', 'Fusion'},
+    ['Dimidiation'] = {'Light', 'Fragmentation'},
+    -- Scythe
+    ['Cross Reaper'] = {'Distortion'}, ['Entropy'] = {'Gravitation', 'Reverberation'},
+    ['Insurgency'] = {'Fusion', 'Compression'}, ['Quietus'] = {'Darkness', 'Distortion'},
+    ['Catastrophe'] = {'Darkness', 'Gravitation'},
+    -- Polearm
+    ['Stardiver'] = {'Gravitation', 'Transfixion'}, ["Camlann's Torment"] = {'Light', 'Fragmentation'},
+    ['Impulse Drive'] = {'Gravitation', 'Induration'}, ['Drakesbane'] = {'Fusion', 'Transfixion'},
+    ['Sonic Thrust'] = {'Transfixion', 'Scission'}, ['Geirskogul'] = {'Light', 'Distortion'},
+    -- Dagger
+    ["Rudra's Storm"] = {'Darkness', 'Distortion'}, ['Evisceration'] = {'Gravitation', 'Transfixion'},
+    ['Exenterator'] = {'Fragmentation', 'Scission'}, ['Mandalic Stab'] = {'Fusion', 'Compression'},
+    -- Katana
+    ['Blade: Shun'] = {'Fusion', 'Impaction'}, ['Blade: Hi'] = {'Darkness', 'Gravitation'},
+    ['Blade: Ten'] = {'Gravitation'}, ['Blade: Ku'] = {'Gravitation', 'Transfixion'},
+    ['Blade: Metsu'] = {'Darkness', 'Fragmentation'}, ['Blade: Kamu'] = {'Fragmentation', 'Compression'},
+    ['Blade: Chi'] = {'Impaction', 'Transfixion'},
+    -- Hand-to-Hand
+    ['Victory Smite'] = {'Light', 'Fragmentation'}, ['Shijin Spiral'] = {'Fusion', 'Reverberation'},
+    ['Asuran Fists'] = {'Gravitation', 'Liquefaction'}, ['Howling Fist'] = {'Transfixion', 'Impaction'},
+    ['Final Heaven'] = {'Light', 'Fusion'}, ["Ascetic's Fury"] = {'Fusion', 'Transfixion'},
+    ['Raging Fists'] = {'Impaction'},
+    -- Club
+    ['Black Halo'] = {'Fragmentation', 'Compression'}, ['Realmrazer'] = {'Fusion', 'Impaction'},
+    ['Judgment'] = {'Impaction'}, ['Hexa Strike'] = {'Fusion'}, ['Randgrith'] = {'Light', 'Fragmentation'},
+    -- Axe
+    ['Decimation'] = {'Fusion', 'Reverberation'}, ['Ruinator'] = {'Distortion', 'Detonation'},
+    ['Cloudsplitter'] = {'Darkness', 'Fragmentation'}, ['Rampage'] = {'Scission'},
+    ['Mistral Axe'] = {'Fusion'}, ['Onslaught'] = {'Darkness', 'Gravitation'},
+    -- Staff
+    ['Shattersoul'] = {'Gravitation', 'Induration'}, ['Cataclysm'] = {'Compression', 'Reverberation'},
+    ['Retribution'] = {'Gravitation', 'Reverberation'}, ['Full Swing'] = {'Liquefaction', 'Impaction'},
+    ['Vidohunir'] = {'Darkness', 'Distortion'},
+}
+-- res.skills ids of melee weapons
+GSC_SKILL = {[1] = 'Hand-to-Hand', [2] = 'Dagger', [3] = 'Sword', [4] = 'Great Sword', [5] = 'Axe',
+             [6] = 'Great Axe', [7] = 'Scythe', [8] = 'Polearm', [9] = 'Katana', [10] = 'Great Katana',
+             [11] = 'Club', [12] = 'Staff'}
+-- average damage (thousands) seen in the 2026-11-18 logs; others count as 5
+GSC_POWER = {['Upheaval'] = 12.8, ["Ukko's Fury"] = 11.4, ['Full Break'] = 2.6,
+             ['Tachi: Shoha'] = 7.8, ['Tachi: Fudo'] = 7.9, ['Tachi: Kasha'] = 7.6, ['Tachi: Rana'] = 4.2,
+             ['Savage Blade'] = 5.4, ['Requiescat'] = 3.0}
+-- defaults for anything missing from aa_config.lua -> group_skillchain
+GSC_DEF = {
+    enabled = true, min_players = 2, soon_tp = 750,
+    window_open = 3.0, window_close = 8.0, window_step = 1.0, window_min = 5.0, ws_lead = 1.0,
+    handoff_wait = 1.5, opener_wait = 2.0, max_steps = 5, plan_depth = 3, filler_wait_tp = 600,
+    once_per_mob = {['Great Axe'] = 'Full Break'},
+    filler_jobs = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
+    fillers = {},
+    weapons = {},
+    job_weapons = {WAR = 'Great Axe', SAM = 'Great Katana', RDM = 'Sword', PLD = 'Sword', BLU = 'Sword',
+                   COR = 'Sword', DRK = 'Scythe', DRG = 'Polearm', MNK = 'Hand-to-Hand', PUP = 'Hand-to-Hand',
+                   THF = 'Dagger', DNC = 'Dagger', BRD = 'Dagger', RNG = 'Dagger', NIN = 'Katana',
+                   WHM = 'Club', GEO = 'Club', BST = 'Axe', RUN = 'Great Sword',
+                   BLM = 'Staff', SCH = 'Staff', SMN = 'Staff'},
+    pools = {
+        ['Great Axe']    = {'Upheaval', "Ukko's Fury", 'Full Break'},
+        ['Great Katana'] = {'Tachi: Shoha', 'Tachi: Fudo', 'Tachi: Kasha'},
+        ['Sword']        = {'Savage Blade', 'Requiescat'},
+        ['Great Sword']  = {'Resolution', 'Torcleaver', 'Ground Strike'},
+        ['Scythe']       = {'Cross Reaper', 'Entropy', 'Insurgency'},
+        ['Polearm']      = {'Stardiver', 'Impulse Drive', 'Drakesbane', "Camlann's Torment"},
+        ['Dagger']       = {"Rudra's Storm", 'Evisceration', 'Exenterator'},
+        ['Katana']       = {'Blade: Shun', 'Blade: Hi', 'Blade: Ku'},
+        ['Hand-to-Hand'] = {'Victory Smite', 'Shijin Spiral', 'Asuran Fists', 'Howling Fist'},
+        ['Club']         = {'Black Halo', 'Realmrazer', 'Judgment'},
+        ['Axe']          = {'Decimation', 'Ruinator', 'Cloudsplitter'},
+        ['Staff']        = {'Shattersoul', 'Cataclysm', 'Retribution'},
+    },
+    power = {},
+}
+GSC = {on = nil, chain = nil, jobs = {}, began = {}, pre_done = {}, pre_n = 0, mob = 0, mob_since = 0,
+       fired_at = 0, said = {}, ids = {}, ids_at = -10, act_at = -10, act_val = false, act_last = nil,
+       learned = nil, learned_at = -100}
+
+function gsc_cfg(k)
+    local c = AA_CFG and AA_CFG.group_skillchain
+    local v = (type(c) == 'table') and c[k] or nil
+    if v == nil then return GSC_DEF[k] end
+    return v
+end
+function gsc_num(k) return tonumber(gsc_cfg(k)) or tonumber(GSC_DEF[k]) or 0 end
+-- one debug line per key until its text changes
+function gsc_dbg(key, msg)
+    if GSC.said[key] == msg then return end
+    GSC.said[key] = msg
+    debug_msg(msg)
+end
+function gsc_power(ws)
+    local p = gsc_cfg('power')
+    local v = type(p) == 'table' and tonumber(p[ws]) or nil
+    return v or GSC_POWER[ws] or 5
+end
+-- best skillchain this WS makes on a resonance (list of properties): name, level
+function gsc_result(props, ws)
+    local wp = GSC_WS[ws]
+    if not wp or type(props) ~= 'table' then return nil, 0 end
+    local best, bl = nil, 0
+    for _, a in ipairs(props) do
+        local row = GSC_COMBO[a]
+        if row then
+            for _, b in ipairs(wp) do
+                local r = row[b]
+                if r and (GSC_LEVEL[r] or 0) > bl then best, bl = r, GSC_LEVEL[r] end
+            end
+        end
+    end
+    return best, bl
+end
+-- party IDs (players and Trusts), cached 2s
+function gsc_party_ids()
+    local now = os.clock()
+    if now - GSC.ids_at < 2 then return GSC.ids end
+    local ids, party = {}, windower.ffxi.get_party()
+    if party then
+        for i = 0, 5 do
+            local m = party['p' .. i]
+            if m and m.mob and m.mob.id then ids[m.mob.id] = true end
+        end
+    end
+    GSC.ids, GSC.ids_at = ids, now
+    return ids
+end
+-- 0x0DD / 0x0DF: a party member's main job
+function gsc_job_packet(id, data)
+    if not data or #data < 0x24 then return end
+    local pid = data:byte(5) + data:byte(6) * 256 + data:byte(7) * 65536 + data:byte(8) * 16777216
+    local jb = (id == 0x0DD) and data:byte(0x23) or data:byte(0x21)
+    local j = jb and jb > 0 and res.jobs[jb]
+    if pid > 0 and j and j.ens then GSC.jobs[pid] = j.ens end
+end
+-- weapon skills this character knows: [name] = skill id, cached 30s
+function gsc_learned()
+    local now = os.clock()
+    if GSC.learned and now - GSC.learned_at < 30 then return GSC.learned end
+    local set = {}
+    local ab = windower.ffxi.get_abilities()
+    for _, wid in ipairs((ab and ab.weapon_skills) or {}) do
+        local r = res.weapon_skills[wid]
+        if r and r.en then set[r.en] = r.skill or true end
+    end
+    GSC.learned, GSC.learned_at = set, now
+    return set
+end
+-- you: the weapon in your hand; others: their job (job_weapons), then weapons[name]
+function gsc_weapon(name, job, isme)
+    if isme then
+        local it = equipped_item_res('main')
+        local w = it and GSC_SKILL[it.skill]
+        if w then return w end
+    end
+    local jw = gsc_cfg('job_weapons')
+    if job and type(jw) == 'table' and jw[job] then return jw[job] end
+    local nw = gsc_cfg('weapons')
+    if type(nw) == 'table' and name then
+        for k, v in pairs(nw) do
+            if type(k) == 'string' and k:lower() == name:lower() then return v end
+        end
+    end
+    return nil
+end
+function gsc_is_filler(job, name)
+    local f = gsc_cfg('fillers')
+    if type(f) == 'table' and name then
+        for _, n in ipairs(f) do if type(n) == 'string' and n:lower() == name:lower() then return true end end
+    end
+    local fj = gsc_cfg('filler_jobs')
+    for _, j in ipairs(type(fj) == 'table' and fj or {}) do if j == job then return true end end
+    return false
+end
+-- the WS a player brings: pools[weapon]; yours only the ones you know
+function gsc_pool(weapon, isme)
+    local pools = gsc_cfg('pools')
+    local list = (type(pools) == 'table' and weapon and pools[weapon]) or {}
+    if not isme then return list end
+    local learned, out = gsc_learned(), {}
+    for _, ws in ipairs(list) do if learned[ws] and GSC_WS[ws] then out[#out + 1] = ws end end
+    if #out == 0 and weapon then   -- none from the pool: anything you know for this weapon
+        local sk
+        for id, nm in pairs(GSC_SKILL) do if nm == weapon then sk = id end end
+        for ws, s in pairs(learned) do
+            if GSC_WS[ws] and s == sk then out[#out + 1] = ws end
+        end
+        table.sort(out, function(a, b) return gsc_power(a) > gsc_power(b) end)
+    end
+    return out
+end
+-- players in the party (no Trusts) with what the plan needs; number of players
+function gsc_members()
+    local out, n = {}, 0
+    local party, pl = windower.ffxi.get_party(), windower.ffxi.get_player()
+    if not party or not pl then return out, 0 end
+    for i = 0, 5 do
+        local m = party['p' .. i]
+        local mob = m and m.mob
+        if m and m.name and mob and mob.id and mob.is_npc ~= true and mob.spawn_type ~= 14 then
+            n = n + 1
+            local isme = mob.id == pl.id
+            local job = isme and pl.main_job or GSC.jobs[mob.id]
+            local weapon = gsc_weapon(m.name, job, isme)
+            out[#out + 1] = {id = mob.id, name = m.name, job = job, me = isme, weapon = weapon,
+                tp = (isme and pl.vitals and pl.vitals.tp) or m.tp or 0,
+                engaged = (isme and pl.status == 1) or ((not isme) and mob.status == 1),
+                filler = gsc_is_filler(job, m.name), pool = gsc_pool(weapon, isme)}
+        end
+    end
+    return out, n
+end
+function gsc_active()
+    if GSC.on == false then return false end
+    if GSC.on == nil and gsc_cfg('enabled') ~= true then return false end
+    if not current_config or not current_config.ws_list or current_config.ws_list.enabled == false then return false end
+    if ws_cmd_off then return false end
+    if ws_mode and type(ws_mode.type) == 'string' and ws_mode.type ~= 'Normal' then return false end
+    local now = os.clock()
+    if now - GSC.act_at >= 2 then
+        local _, n = gsc_members()
+        GSC.act_val = n >= gsc_num('min_players')
+        GSC.act_at = now
+        if GSC.act_val ~= GSC.act_last then
+            GSC.act_last = GSC.act_val
+            info_msg('GROUP SKILLCHAIN ' .. (GSC.act_val and ('ON -- ' .. n .. ' players in the party; job_config ws_list paused.')
+                     or 'OFF -- no other player in the party; using job_config ws_list.'))
+        end
+    end
+    return GSC.act_val
+end
+-- chain window of a resonance: open, close (os.clock)
+function gsc_window(c)
+    local close = math.max(gsc_num('window_min'),
+        gsc_num('window_close') - (math.max(c.step or 1, 1) - 1) * gsc_num('window_step'))
+    return c.t + gsc_num('window_open'), c.t + close
+end
+-- value of the best chain that can follow a resonance, up to depth more steps
+function gsc_follow(props, depth, prev_id, mem, step)
+    if depth <= 0 or not props then return 0 end
+    local best, soon = 0, gsc_num('soon_tp')
+    for _, m in ipairs(mem) do
+        if m.engaged and m.id ~= prev_id and (step > 1 or m.tp >= soon) then
+            for _, ws in ipairs(m.pool) do
+                local r, l = gsc_result(props, ws)
+                if r then
+                    local v = l * 10 + gsc_power(ws) - (m.filler and 5 or 0)
+                        + 0.8 * gsc_follow({r}, depth - 1, m.id, mem, step + 1)
+                    if v > best then best = v end
+                end
+            end
+        end
+    end
+    return best
+end
+function gsc_sort(list)
+    table.sort(list, function(a, b)
+        if a.key ~= b.key then return a.key > b.key end
+        return a.m.name < b.m.name
+    end)
+    return list
+end
+-- who can continue this resonance: best WS per player, best first
+function gsc_continuers(mem, props)
+    local out, soon = {}, gsc_num('soon_tp')
+    for _, m in ipairs(mem) do
+        if m.engaged and m.tp >= soon then
+            local best
+            for _, ws in ipairs(m.pool) do
+                local r, l = gsc_result(props, ws)
+                if r then
+                    -- same value as the opener plan (a Fusion that leads to Light beats a
+                    -- dead-end Darkness), plus a little for being ready now
+                    local key = l * 10 + gsc_power(ws) - (m.filler and 5 or 0) + ((m.tp >= 1000) and 2 or 0)
+                        + 0.8 * gsc_follow({r}, gsc_num('plan_depth') - 1, m.id, mem, 2)
+                    if not best or key > best.key then best = {m = m, ws = ws, res = r, key = key} end
+                end
+            end
+            if best then out[#out + 1] = best end
+        end
+    end
+    return gsc_sort(out)
+end
+-- openers: best opening WS per ready melee player, best plan first
+function gsc_openers(mem)
+    local out = {}
+    for _, m in ipairs(mem) do
+        if m.engaged and not m.filler and m.tp >= 1000 then
+            local best
+            for _, ws in ipairs(m.pool) do
+                local key = gsc_follow(GSC_WS[ws], gsc_num('plan_depth'), m.id, mem, 1) + 0.1 * gsc_power(ws)
+                if not best or key > best.key then best = {m = m, ws = ws, key = key} end
+            end
+            if best then out[#out + 1] = best end
+        end
+    end
+    return gsc_sort(out)
+end
+-- once_per_mob WS this player still owes on this mob, or nil
+function gsc_pre_ws(m, mob_id)
+    local pre = gsc_cfg('once_per_mob')
+    local pw = type(pre) == 'table' and m.weapon and pre[m.weapon] or nil
+    if not pw or GSC.pre_done[mob_id .. '|' .. m.id] then return nil end
+    if m.me then return gsc_learned()[pw] and pw or nil end
+    for _, ws in ipairs(m.pool) do if ws == pw then return pw end end
+    return nil
+end
+function gsc_pre_mark(mob_id, actor_id)
+    GSC.pre_n = GSC.pre_n + 1
+    if GSC.pre_n > 400 then GSC.pre_done, GSC.pre_n = {}, 1 end
+    GSC.pre_done[mob_id .. '|' .. actor_id] = true
+end
+function gsc_fire(t, ws, why)
+    local cur = windower.ffxi.get_mob_by_target('t')
+    if not cur or cur.id ~= t.id or not cur.hpp or cur.hpp <= 0 then return 'wait' end
+    face_mob_direct(cur)   -- v4.70: turn first ("You cannot see" right after a switch)
+    info_msg('GSC: ' .. why)
+    cmd('input /ws "' .. ws .. '" <t>')
+    last_ws_time = os.clock()
+    GSC.fired_at = last_ws_time
+    ws_sc_locked = false
+    return 'fired'
+end
+-- One combat tick. false = not active (job_config ws_list runs);
+-- 'fired' = WS sent; 'hold' = our WS is due in a moment (no JAs now);
+-- 'wait' = nothing for us to do (JAs etc. may run).
+function gsc_tick()
+    if not gsc_active() then return false end
+    ws_sc_locked = false
+    if ds_state and ds_state.on then return 'wait' end
+    local pl = windower.ffxi.get_player()
+    local t = windower.ffxi.get_mob_by_target('t')
+    if not pl or not pl.vitals or not t or not t.id or not t.hpp or t.hpp <= 0 then return 'wait' end
+    local now = os.clock()
+    if GSC.mob ~= t.id then GSC.mob, GSC.mob_since = t.id, now end
+    local mem = gsc_members()
+    local me
+    for _, m in ipairs(mem) do if m.me then me = m end end
+    if not me or #me.pool == 0 then
+        gsc_dbg('pool', 'GSC: no weapon skills for ' .. tostring(me and me.weapon or '?') ..
+                ' in group_skillchain.pools -- not weaponskilling.')
+        return 'wait'
+    end
+    local my_tp = pl.vitals.tp or 0
+    local ready = my_tp >= 1000 and (now - last_ws_time) >= 3.0
+    -- a party WS is on its way: let it land first
+    for id, bt in pairs(GSC.began) do
+        if now - bt > 3.0 then GSC.began[id] = nil
+        elseif id ~= pl.id then return ready and 'hold' or 'wait' end
+    end
+    local c = GSC.chain
+    local idle_since = GSC.mob_since
+    if c and c.target == t.id then
+        local open_t, close_t = gsc_window(c)
+        local live = #(c.props or {}) > 0 and (c.step or 1) < gsc_num('max_steps')
+                     and now < close_t - gsc_num('ws_lead')
+        if live then
+            local cands = gsc_continuers(mem, c.props)
+            for k, cd in ipairs(cands) do
+                if cd.m.me then
+                    local go_at = open_t + (k - 1) * gsc_num('handoff_wait')
+                    if ready and now >= go_at then
+                        return gsc_fire(t, cd.ws, string.format('%s >> %s = %s (step %d)',
+                            tostring(c.label), cd.ws, cd.res, (c.step or 1) + 1))
+                    end
+                    if now >= go_at - 1.5 then return 'hold' end
+                    return 'wait'
+                end
+            end
+            if #cands > 0 then
+                gsc_dbg('next', 'GSC: ' .. cands[1].m.name .. ' continues ' .. tostring(c.label) ..
+                        ' with ' .. cands[1].ws .. ' -- holding.')
+                return 'wait'
+            end
+        end
+        c.dead_at = c.dead_at or now
+        if c.dead_at > idle_since then idle_since = c.dead_at end
+    end
+    if not ready or (now - GSC.fired_at) < 3.0 then return 'wait' end
+    -- once per mob (Full Break) before chaining: players who still owe theirs
+    -- on this mob open first (seen from the WS landing, so every AA agrees)
+    local forced = {}
+    for _, m in ipairs(mem) do
+        local pw = m.engaged and not m.filler and m.tp >= 1000 and gsc_pre_ws(m, t.id)
+        if pw then forced[#forced + 1] = {m = m, ws = pw, key = 0} end
+    end
+    gsc_sort(forced)
+    for k, f in ipairs(forced) do
+        if f.m.me and now >= idle_since + (k - 1) * gsc_num('opener_wait') then
+            gsc_pre_mark(t.id, me.id)
+            return gsc_fire(t, f.ws, f.ws .. ' (once per mob, opens the chain)')
+        end
+    end
+    if #forced > 0 and now < idle_since + #forced * gsc_num('opener_wait') then
+        gsc_dbg('pre', 'GSC: ' .. forced[1].m.name .. ' opens with ' .. forced[1].ws .. ' (once per mob) -- waiting.')
+        return 'wait'
+    end
+    if me.filler then
+        -- magic burst first, then save the opener for a melee who is close to 1000 TP
+        if skillchain_time and (now - skillchain_time) < (SC_WINDOW + 0.5) then return 'wait' end
+        if my_tp < 2900 then
+            for _, m in ipairs(mem) do
+                if not m.me and not m.filler and m.engaged and m.tp >= gsc_num('filler_wait_tp') then
+                    gsc_dbg('filler', 'GSC: filler -- ' .. m.name .. ' is near 1000 TP, saving the opener for them.')
+                    return 'wait'
+                end
+            end
+        end
+        local best, bk = nil, -1
+        for _, ws in ipairs(me.pool) do
+            local k = gsc_follow(GSC_WS[ws], gsc_num('plan_depth'), me.id, mem, 2) + 0.1 * gsc_power(ws)
+            if k > bk then best, bk = ws, k end
+        end
+        if best then return gsc_fire(t, best, best .. ' (filler -- no chain to wait for)') end
+        return 'wait'
+    end
+    local ops = gsc_openers(mem)
+    for k, op in ipairs(ops) do
+        if op.m.me then
+            if now >= idle_since + (k - 1) * gsc_num('opener_wait') then
+                return gsc_fire(t, op.ws, op.ws .. ' (opener' ..
+                    ((op.key >= 10) and string.format(', plan value %.0f', op.key) or '') .. ')')
+            end
+            gsc_dbg('open', 'GSC: ' .. ops[1].m.name .. ' opens with ' .. ops[1].ws .. ' -- waiting my turn.')
+            return 'wait'
+        end
+    end
+    return 'wait'
+end
+-- action event: party WS starts / lands, and the skillchain it made
+function gsc_on_action(act)
+    if not act or not act.actor_id or type(act.targets) ~= 'table' then return end
+    local cat = act.category
+    if cat ~= 3 and cat ~= 7 and cat ~= 11 then return end
+    if not gsc_party_ids()[act.actor_id] then return end
+    local now = os.clock()
+    if cat == 7 then   -- readying: 24931 starts, 28787 interrupted
+        if act.param == 28787 then GSC.began[act.actor_id] = nil else GSC.began[act.actor_id] = now end
+        return
+    end
+    GSC.began[act.actor_id] = nil
+    local t1 = act.targets[1]
+    local a1 = t1 and type(t1.actions) == 'table' and t1.actions[1]
+    if not t1 or not t1.id or not a1 or t1.id == act.actor_id then return end
+    local r = (cat == 3) and res.weapon_skills[act.param] or res.monster_abilities[act.param]
+    local name = r and r.en
+    local props = name and GSC_WS[name]
+    if cat == 3 and name then   -- someone's once_per_mob WS landed on this mob
+        local pre = gsc_cfg('once_per_mob')
+        for _, pw in pairs(type(pre) == 'table' and pre or {}) do
+            if pw == name then gsc_pre_mark(t1.id, act.actor_id) end
+        end
+    end
+    if not props then
+        if cat == 3 and name then   -- a WS we have no data for: the old resonance is gone
+            GSC.chain = {target = t1.id, t = now, props = {}, step = 1, label = name}
+        end
+        return
+    end
+    if a1.message == 188 then return end   -- missed: no resonance
+    local sc = a1.has_add_effect and GSC_SC_MSG[a1.add_effect_message] or nil
+    local c = GSC.chain
+    if sc then
+        local step = ((c and c.target == t1.id) and (c.step or 1) or 1) + 1
+        GSC.chain = {target = t1.id, t = now, props = {sc}, step = step, label = sc}
+        debug_msg('GSC: ' .. name .. ' made ' .. sc .. ' (step ' .. step .. ').')
+    else
+        GSC.chain = {target = t1.id, t = now, props = props, step = 1, label = name}
+    end
+end
+-- //aa gsc [on|off|auto]
+function gsc_command(arg)
+    local a = arg and arg:lower()
+    if a == 'on' then GSC.on = true; GSC.act_at = -10
+    elseif a == 'off' then GSC.on = false; GSC.act_at = -10
+    elseif a == 'auto' or a == 'config' then GSC.on = nil; GSC.act_at = -10
+    elseif a then
+        windower.add_to_chat(8, '[AutoAttack] Usage: //aa gsc [on|off|auto]')
+        return
+    end
+    local mem, n = gsc_members()
+    local state = (GSC.on == false and 'OFF (//aa gsc off)') or (GSC.on == true and 'ON (//aa gsc on)')
+        or ('from config (enabled = ' .. tostring(gsc_cfg('enabled')) .. ')')
+    windower.add_to_chat(8, '[AutoAttack] Group skillchain ' .. state .. ' -- ' .. n .. ' player(s), ' ..
+        (gsc_active() and 'ACTIVE.' or 'not active.'))
+    for _, m in ipairs(mem) do
+        windower.add_to_chat(8, string.format('[AutoAttack]  %s %s %s %s TP %d%s: %s', m.name, tostring(m.job or '?'),
+            tostring(m.weapon or '?'), m.engaged and 'engaged' or 'idle', m.tp, m.filler and ' (filler)' or '',
+            (#m.pool > 0) and table.concat(m.pool, ', ') or 'no WS'))
+    end
+    local c = GSC.chain
+    if c then
+        windower.add_to_chat(8, string.format('[AutoAttack]  last: %s, %.1fs ago, step %d.', tostring(c.label),
+            os.clock() - c.t, c.step or 1))
+    end
+end
 
 
 function use_magic_burst()
@@ -5552,6 +6253,7 @@ function check_and_use_ring(name, use_lock)
     end
     local buffs_before = exp_cp_buffs()
 
+    ring_attempted = true   -- v4.70: use_rings tries one ring per pass
     debug_msg('RINGS: using ' .. name .. ' (' .. charges .. '/' .. tostring(max_chg) .. ' charges).')
     ring_equip(name)   -- v4.66: waits RING_EQUIP_GAP after the last ring /equip
     coroutine.sleep(11)
@@ -5673,69 +6375,88 @@ end
 
 
 
+-- =========================================================================
+-- v4.70: RING PASSES (2026-11-18, Mythrandiir: Trizek -> Endorsement -> Echad
+-- tried back to back, ~18s each, none went off -- the combat loop was held
+-- ~54s and ring1 was off the default ring 11% of the night)
+-- * one ring /item per pass; a try that doesn't go off blocks every ring
+--   for RING_PASS_GAP s
+-- * CP rings are skipped while no capacity points come in (exemplar points
+--   seen, none of the other in RING_POINTS_WINDOW s) or job points are capped
+-- =========================================================================
+RING_PASS_GAP      = 60
+RING_POINTS_WINDOW = 1800
+ring_next_pass     = 0
+ring_attempted     = false
+RING_EP_SEEN       = nil
+RING_CP_SEEN       = nil
+function ring_cp_useless(player)
+    local now = os.clock()
+    if RING_EP_SEEN and (now - RING_EP_SEEN) < RING_POINTS_WINDOW
+       and not (RING_CP_SEEN and (now - RING_CP_SEEN) < RING_POINTS_WINDOW) then
+        return 'earning EP, no CP seen for 30 min'
+    end
+    local jp = player.job_points and player.main_job and player.job_points[player.main_job:lower()]
+    if type(jp) == 'table' and (tonumber(jp.jp_spent) or 0) >= 2100 and (tonumber(jp.jp) or 0) >= 500 then
+        return 'job points capped (2100 spent, 500 banked)'
+    end
+    return nil
+end
+
 function use_rings()
     if not current_config.ring_config then return end
     if current_config.ring_config.enabled == false then return end
     -- Don't equip rings within 3s of a WS or 2s of a job ability - animation lock causes 'Invalid argument'
     if (os.clock() - last_ws_time) < 3 then return end
     if (os.clock() - last_ability_time) < 2 then return end
+    if os.clock() < ring_next_pass then return end   -- v4.70
 
-    -- debug_msg('TRACE: use_rings get_player')
 	local player = windower.ffxi.get_player()
-	-- debug_msg('TRACE: use_rings got_player')
-	
-    if not player or not player.buffs then 
+    if not player or not player.buffs then
         return  -- player data transiently unavailable; skip quietly
     end
-    
     local buffs = player.buffs
     -- 249: Dedicated/Exp, 579: Commitment/CP, 618: Emporox
     local has_exp_buff = table.contains(buffs, 249)
     local has_cp_buff = table.contains(buffs, 579)
     local has_emporox_buff = table.contains(buffs, 618)
-
-    local ring_used = false
-
 	local ring_cfg = current_config.ring_config
+
+    -- v4.70: true when a ring was used or tried (one /item per pass)
+    local function try(name, lock)
+        ring_attempted = false
+        local ok = check_and_use_ring(name, lock)
+        if not ok and ring_attempted then ring_next_pass = os.clock() + RING_PASS_GAP end
+        return ok or ring_attempted
+    end
 
     -- 1. Emporox Check
     if ring_cfg.emporox_ring and not has_emporox_buff then
-        if check_and_use_ring(ring_cfg.emporox_ring, false) then ring_used = true end
+        if try(ring_cfg.emporox_ring, false) then return end
     end
 
-    -- 2. CP Check
-    -- v4.06: CP only builds at level 99, so CP rings are skipped below 99.
+    -- 2. CP Check (v4.06: CP only builds at level 99; v4.70: not while no CP comes in)
     local main_lvl = tonumber(player.main_job_level) or 0
-    if not ring_used and not has_cp_buff and not has_exp_buff and main_lvl >= 99 then
-        if ring_cfg.cp_rings then
+    if not has_cp_buff and not has_exp_buff and main_lvl >= 99
+       and type(ring_cfg.cp_rings) == 'table' and #ring_cfg.cp_rings > 0 then
+        local why = ring_cp_useless(player)
+        if why then
+            ring_note('cp', 'cp|' .. why, 'RINGS: CP rings skipped -- ' .. why .. '.')
+        else
             for _, ring_name in ipairs(ring_cfg.cp_rings) do
-                if check_and_use_ring(ring_name, true) then 
-                    ring_used = true 
-                    break 
-                end
+                if try(ring_name, true) then return end
             end
         end
     end
 
     -- 3. EXP Check
-    if not ring_used and not has_cp_buff and not has_exp_buff then
-        if ring_cfg.exp_rings then
-            for _, ring_name in ipairs(ring_cfg.exp_rings) do
-                if check_and_use_ring(ring_name, true) then 
-                    ring_used = true 
-                    break 
-                end
-            end
+    if not has_cp_buff and not has_exp_buff and type(ring_cfg.exp_rings) == 'table' then
+        for _, ring_name in ipairs(ring_cfg.exp_rings) do
+            if try(ring_name, true) then return end
         end
     end
-
-	-- 4. Default Ring Fallback removed (v2.47).
-	-- Previously re-equipped the default ring whenever ring1 wasn't Chirich Ring,
-	-- which fired redundantly every ~30s due to GearSwap's aftercast equip restoring
-	-- sets.TP.Normal (which includes left_ring). The restore is now done in
-	-- check_and_use_ring immediately after the exp/cp/emporox /item command -- the
-	-- only moment ring1 is knowingly not the default ring. GearSwap handles all
-	-- other ring1 transitions via its own aftercast/status_change equip calls.
+	-- Default ring fallback removed (v2.47): check_and_use_ring puts the default
+	-- ring back right after the /item; GearSwap handles every other ring1 change.
 end
 
 
@@ -6800,6 +7521,7 @@ function main_logic_loop(my_gen)
 								-- Step 3 only reaches here with a live mob (hpp > 0 gate passed),
 								-- so the cursor IS on a live mob. Just fire /attack on directly.
 								info_msg('ATTACKING >>>> (melee) ' .. (target.name or '?'))
+								face_mob_direct(target)   -- v4.70: face before engaging ("Unable to see" on the first swing)
 								cmd('input /attack on')
 								if FAST_RETARGET then  -- v4.19
 									wait_for_engage()
@@ -7384,11 +8106,16 @@ function main_logic_loop(my_gen)
 					if not target_alive() then return end
 					pet_logic(true)  -- v3.94: summon / send pet in
 					if not target_alive() then return end
-					use_job_abilities()
+					-- v4.70: group skillchain (aa_config.lua -> group_skillchain) plans the
+					-- party's weapon skills; false = not active, job_config ws_list runs
+					local _gsc = gsc_tick()
+					if _gsc == 'fired' then return end
 					if not target_alive() then return end
-					use_weapon_skill()
+					if _gsc ~= 'hold' then use_job_abilities() end
 					if not target_alive() then return end
-					use_rings()
+					if not _gsc then use_weapon_skill() end
+					if not target_alive() then return end
+					if _gsc ~= 'hold' then use_rings() end
 					if not target_alive() then return end
 					use_item_food()
 					if not target_alive() then return end
@@ -9239,6 +9966,32 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.70 - Group skillchains, JA timing, Berserk/Defender, rings, facing (Mark,
+        2026-11-18 log review: ~20k EP/h, 65s kill cycle, chain broke at ~#21).
+        * GROUP SKILLCHAIN (aa_config.lua -> group_skillchain, //aa gsc): with
+          another player in the party, every AA plans the party's WS from the
+          party list, jobs (0x0DD/0x0DF), TP and the chain it sees on the mob;
+          job_config ws_list is paused. Best continuer goes first (level, melee
+          before fillers, stronger closer), next best after handoff_wait;
+          openers ranked by the 2-4 step chain they lead to; once_per_mob
+          (Great Axe: Full Break) opens each new mob; fillers (RDM ...) burst
+          first and only WS when no melee is close to 1000 TP or a chain needs
+          them. Collision guard: no WS while a party WS is readying.
+        * ws_list entries take once_per_mob = true (WAR Normal: Full Break once
+          per mob, then Upheaval > Ukko's Fury > Upheaval).
+        * No JA within JA_AFTER_WS_GAP (4s) of our own WS: all 193 of Myth's
+          "Unable to use job ability" were 3.0-3.9s after his WS. A refused JA
+          gets its min_time back (up to 3 times in 60s) instead of waiting
+          its whole recast.
+        * Berserk / Aggressor stack: their buff_any no longer skips each other
+          (JA_STACKS). Defender yields to Berserk (JA_YIELD / yield_to): held
+          while Berserk is up or ready within 30s. Shadow had Defender up
+          87 of 169 min and Berserk 31.
+        * Rings: one ring /item per pass, RING_PASS_GAP (60s) after a try that
+          doesn't go off (3 rings back to back held the loop ~54s); CP rings
+          skipped while EP comes in and no CP does, or job points are capped.
+        * Facing: turn before /attack on, before every WS, and again 0.4s and
+          1.0s after a hot switch; HOT-SWITCH-PROVOKE turns before Provoke.
 v4.69 - Pass-through commands now answer the sender (Mark, 2026-11-18:
         "/t scracheebrat aa ws off" gave no reply). aa pull | assist |
         ws | move | ds by /tell or /p:
@@ -9320,6 +10073,7 @@ windower.register_event('incoming chunk', function(id, data)
     if not data then return end
     -- v3.98: only 4 packet IDs matter; return before creating the pcall closure
     -- (this handler runs for every incoming packet -- hundreds per second).
+    if id == 0x0DD or id == 0x0DF then pcall(gsc_job_packet, id, data); return end  -- v4.70: party jobs
     if id ~= 0x017 and id ~= 0x029 and id ~= 0x067 and id ~= 0x068 then return end
     local _ok, _err = pcall(function()
     if id == 0x017 then
@@ -9456,6 +10210,12 @@ windower.register_event('incoming text', function(original)
                 end
             end
         end
+    end
+    -- v4.70: refused JA -> retry; EP / CP coming in (CP rings)
+    if original and original:find('Unable to use job ability', 1, true) then ja_failed_text() end
+    if _clean and not aa_own_line(_clean) then
+        if _clean:find('exemplar points', 1, true) then RING_EP_SEEN = os.clock() end
+        if _clean:find('capacity points', 1, true) then RING_CP_SEEN = os.clock() end
     end
     -- v4.07: client refused our ring /item
     if original and ring_item_pending_until > os.clock()
@@ -9652,6 +10412,8 @@ function aa_addon_command(command, ...)
         windower.add_to_chat(8, string.format('[AutoAttack] Full party rule %s -- %d/%d Trusts, %d/6 in party%s.%s',
             FULL_PARTY_PULL and 'ON' or 'OFF (this session)', _n, _w, _t, _f and '' or ' (NOT full)',
             _m == 'fix' and ' Ghost slot fix (/retr all + call Trusts) on the next idle tick.' or ''))
+    elseif command == 'gsc' then
+        gsc_command(subcmd)   -- v4.70: //aa gsc [on|off|auto]
     elseif command == 'ws' then
         -- v4.33: //aa ws [off|on] -- no argument shows the current state
         local _m = subcmd and subcmd:lower()
@@ -9673,7 +10435,7 @@ function aa_addon_command(command, ...)
         if command ~= 'help' then
             windower.add_to_chat(8, '[AutoAttack] Unknown command: ' .. tostring(command))
         end
-        windower.add_to_chat(8, '[AutoAttack] v' .. _addon.version .. ' -- //aa assist | pull [n|s|e|w|...] | stop | move [off|pull|provoke|melee|target|n] | debug [0|1|2] | target [packet|native] | rings [reset] | ds [clear] | ws [off|on] | fullparty [on|off|fix] | dumpinv | id | pet')
+        windower.add_to_chat(8, '[AutoAttack] v' .. _addon.version .. ' -- //aa assist | pull [n|s|e|w|...] | stop | move [off|pull|provoke|melee|target|n] | debug [0|1|2] | target [packet|native] | rings [reset] | ds [clear] | ws [off|on] | gsc [on|off|auto] | fullparty [on|off|fix] | dumpinv | id | pet')
         windower.add_to_chat(8, '[AutoAttack] party: //aa invite me|<name> [sync <n>] [leader <n>] [fight] | fight | stop | stack | follow [n] | unfollow | cancel | disband | leave | leader <n> | sync <n> | unsync | trusts [grp] | retr | retrust | rest | mount [n] | dismount | pass | lot | sneak | invis | warp | status | ping | party')
     end
 end
@@ -9809,6 +10571,7 @@ windower.register_event('action', function(action)
     -- on something other than ourselves (cat 1 melee, 2 ranged, 3 WS, 4 spell).
     local _cat = action.category
     ds_on_action(action)  -- v4.32: Dread Spikes tracking
+    gsc_on_action(action) -- v4.70: group skillchain
 
     -- v3.87: Provoke confirmation for provoke_fire_confirmed()
     if _cat == 6 and provoke_pending.active and provoke_pending.ja_id

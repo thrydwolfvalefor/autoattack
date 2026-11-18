@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.69** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.70** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -181,7 +181,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | `help` | Replies with the command list. |
 | `reload [all]` (or `rl`) | Reloads AutoAttack (`//lua r autoattack`) (v4.60). By `/tell`: just that character. In party chat: every AutoAttack in the party. `reload all` (typed or by `/tell`): says `/p aa reload`, so the whole party reloads, including the sender. After the reload each one answers in the same channel with `[AA] <name>: reloaded -- AutoAttack v<version>`. The reload stops AutoAttack, so send `fight` / `pull` / `assist` again afterwards. |
 | `update [all\|force]` | Downloads the newest release from GitHub (`thrydwolfvalefor/autoattack`, or `party.update_url` in aa_config.lua), checks every file, backs the current files up to `backups\`, installs the new ones, replies `downloaded v<new> -- reloading...`, reloads, then replies `updated and reloaded -- AutoAttack v<new> (was v<old>)` (v4.62). Only `autoattack.lua`, `aa_party.lua`, `aa_config_defaults.lua` and `README.md` are replaced; your `aa_config.lua`, `data\` and logs are never touched. By `/tell`: that character; in party chat: every AutoAttack in the party; `update all`: the whole party. Already current: `already on v...`. `force` re-installs or allows an older version. Refused while fighting. `reload` only reloads the files already on the PC. Needs v4.64 or later (the v4.62 / v4.63 updater was broken). |
-| `pull [dir]`, `assist`, `ws on\|off`, `move <mode>`, `ds [clear]` | Same as the `//aa` command. `pull` / `assist` switch the running mode if AutoAttack is already on. Each one answers the sender (v4.69): `ws` / `move` / `ds` send back what the command printed (e.g. `[AA] Scracheebrat: Weapon skills OFF (until aa ws on or the addon is reloaded).`, at most 5 lines); `pull` / `assist` say `switched to PULL mode (was ASSIST)`, `already in PULL mode`, `started PULL mode` or `couldn't start PULL mode`. A `/tell` is answered by tell; a party-chat command is answered in party by everyone except the character that sent it. `ws off` / `move` last until `ws on` / another `move` or a reload. |
+| `pull [dir]`, `assist`, `ws on\|off`, `move <mode>`, `ds [clear]`, `gsc on\|off\|auto` | Same as the `//aa` command. `pull` / `assist` switch the running mode if AutoAttack is already on. Each one answers the sender (v4.69): `ws` / `move` / `ds` send back what the command printed (e.g. `[AA] Scracheebrat: Weapon skills OFF (until aa ws on or the addon is reloaded).`, at most 5 lines); `pull` / `assist` say `switched to PULL mode (was ASSIST)`, `already in PULL mode`, `started PULL mode` or `couldn't start PULL mode`. A `/tell` is answered by tell; a party-chat command is answered in party by everyone except the character that sent it. `ws off` / `move` last until `ws on` / another `move` or a reload. |
 
 **Settings** (`party = {...}` in aa_config.lua): `enabled`, `friends`, `party_range` (1), `stack_precision` (0.3), `follow_range` (1), `stack_timeout` (30s), `stack_wait` (5s), `trust_wait` (120s), `finish_timeout` (300s: an invite or retrust is cancelled if the party is still fighting after this), `reply_timeout` (8s), `auto_accept` (true: invites from friends are accepted), `mount` ('Raptor'), `warp_ring` ('Warp Ring'), `warp_ring_delay` (11s), `warp_claim_wait` (3s), `warp_wait` (90s), `retr_command` ('/retr all').
 
@@ -511,6 +511,19 @@ ws_list = {enabled = true,
 
 The list is walked in order and wraps back to the first entry. The position resets on every new target and when a fight ends.
 
+### Group skillchain (v4.70)
+
+When another player is in the party (`group_skillchain.min_players`, default 2 with you), every AutoAttack plans the party's weapon skills together and the job's `ws_list` is paused. It runs again as soon as you are the only player left. No messages pass between characters: each AutoAttack works out the same plan from the party list, each player's job (party packets), TP, `group_skillchain` in `aa_config.lua`, and the weapon skills it sees land on the mob (players' and Trusts').
+
+* **Continuing a chain.** After a WS lands, whoever adds the most goes first: the skillchain level, the stronger closing WS (`power`), and what can still follow it. Melee come before fillers. If that player doesn't go, the next best gets a turn `handoff_wait` seconds later. Nobody breaks a live chain that someone else can still continue.
+* **Opening.** With no live chain, the ready player whose opener leads to the best 2-4 step chain (counting players who are ready or nearly ready, `soon_tp`) opens; the next best opens `opener_wait` seconds later if they don't.
+* **Once per mob.** `once_per_mob = {['Great Axe'] = 'Full Break'}`: a player who still owes that WS on the current mob opens with it, then the chain carries on (Full Break > Kasha = Fusion > Ukko's Fury = Light > Fudo = Light).
+* **Fillers** (`filler_jobs`, default RDM BLM WHM SCH GEO BRD SMN, or `fillers = {'Name'}`): magic burst first; use TP to continue a chain only when no melee can, otherwise only while the melee are under `filler_wait_tp` (or the filler is near 3000 TP).
+* **Weapons.** Yours is read from your main hand; other players' from `job_weapons[job]`, or `weapons[name]` until their job is known. `pools[weapon]` lists the WS each player brings (yours only the ones you have learned).
+* **Collision guard.** No WS while another party member's WS is readying.
+* `//aa gsc` shows what it sees (players, jobs, weapons, TP, pools, last chain). `//aa gsc on|off` overrides `enabled` for this session; `//aa gsc auto` goes back to the config. Also by tell or party chat: `aa gsc off`.
+* Only with `ws_mode.type = "Normal"`; AoE / Odin / other modes still use `ws_list`.
+
 ### `ring_config`
 
 ```lua
@@ -523,6 +536,13 @@ ring_config = {enabled = true,
 ```
 
 If you have no EXP/CP/Emporox buff, the script equips a ring in slot ring1, uses it, then equips `default_ring` back. Exp and CP rings are locked for 2 hours after use; the lock is stored in the settings file. Rings are looked up in your inventory and wardrobes. **Equipping and using a ring takes about 18 seconds, during which the loop does nothing else.** The `/item` waits until 5 seconds have passed with no kill nearby (`RING_KILL_HOLD`). (v4.43) If kills keep coming for 20 seconds (`RING_HOLD_MAX`), the ring is skipped, `default_ring` goes back on, and that ring is tried again 60 seconds later (`RING_HOLD_RETRY`). Set `enabled = false` (or leave a list out) if you do not want this.
+
+**v4.70 notes**
+
+* `ws_list` entries take `once_per_mob = true` (fires once on each mob, then the list carries on without it).
+* `abilities` entries take `yield_to = {'Berserk'}` (and `yield_secs`, default 30): the JA is held while that JA is up or ready within `yield_secs`. Built in for Defender (Defender and Berserk cancel each other). Berserk and Aggressor stack, so their `buff_any` no longer skip each other.
+* No job ability within 4 seconds of your own WS, and a JA the game refuses ("Unable to use job ability") is tried again after the gap instead of waiting its whole recast.
+* Rings: one ring per pass and 60 seconds before the next ring after one that didn't go off. CP rings are skipped while exemplar points come in and capacity points don't, or when job points are capped.
 
 ### `item_food`
 

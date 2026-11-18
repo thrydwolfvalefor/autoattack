@@ -13,7 +13,8 @@
     was typed (/p, party chat mode, macro) -- caught from the party echo,
     v4.68: party lines go out at least 2s apart -- a reply right after your
     own line was dropped by the game,
-    v4.69: pull / assist / ws / move / ds answer the sender)
+    v4.69: pull / assist / ws / move / ds answer the sender,
+    v4.70: aa gsc [on|off|auto] -- group skillchain switch, answers the sender)
 
     Loaded by autoattack.lua. Lets your friends (party.friends in
     aa_config.lua) control this character's AutoAttack with /tell or party
@@ -33,7 +34,7 @@
       disband | leave | leader <name> | sync <name> | unsync
       trusts [group] | retr | retrust | rest | mount [name] | dismount | pass | lot
       status | ping | help | version | reload [all] | update [all|force|check] | rollback [all]
-      pull [dir] | assist | ws on|off | move <mode> | ds [clear]   (answer the sender, v4.69)
+      pull [dir] | assist | ws on|off | move <mode> | ds [clear] | gsc [on|off|auto]   (answer the sender)
       //aa party   (typed only) -- friends, settings and what the party code is doing
 
     See README.md "Party commands" for the details.
@@ -1415,7 +1416,7 @@ end
 -- ---------------------------------------------------------------------------
 -- commands ("aa <command> ...")
 -- ---------------------------------------------------------------------------
-local PASS_THROUGH = {pull = true, assist = true, ws = true, move = true, ds = true}
+local PASS_THROUGH = {pull = true, assist = true, ws = true, move = true, ds = true, gsc = true}  -- v4.70: gsc
 
 -- v4.69: pass-through commands answer the sender. ws / move / ds run here
 -- right away (aa_addon_command in autoattack.lua) and the [AutoAttack] lines
