@@ -10,7 +10,9 @@
     v4.64: aa update fix -- no yield inside pcall,
     v4.65: aa update check | aa version | aa rollback [all] | richer ping,
     v4.67: your own party line runs on your own character too, however it
-    was typed (/p, party chat mode, macro) -- caught from the party echo)
+    was typed (/p, party chat mode, macro) -- caught from the party echo,
+    v4.68: party lines go out at least 2s apart -- a reply right after your
+    own line was dropped by the game)
 
     Loaded by autoattack.lua. Lets your friends (party.friends in
     aa_config.lua) control this character's AutoAttack with /tell or party
@@ -212,6 +214,30 @@ end
 -- ---------------------------------------------------------------------------
 local function tell(name, text) send('input /tell ' .. name .. ' ' .. text) end
 
+-- v4.68: party chat lines from this character go out at least PARTY_GAP s
+-- apart. Mythrandiir's own "aa version" (02:01:12) ran and its reply was sent
+-- 0.57s later, but never showed in party chat: the game drops a second party
+-- line sent that fast. P.party_last = when our last party line went out (or
+-- is scheduled to); a later line is scheduled after the gap -- never a
+-- coroutine.sleep here (reply runs inside do_update's pcall, see v4.64).
+local PARTY_GAP = 2
+P.party_last = P.party_last or -99
+local function party_say(line)
+    local now = os.clock()
+    local wait = P.party_last + PARTY_GAP - now
+    if wait > 0 then
+        P.party_last = now + wait
+        dbg(string.format('party line held %.1fs: %s', wait, line))
+        coroutine.schedule(function() send('input /p ' .. line) end, wait)
+    else
+        P.party_last = now
+        send('input /p ' .. line)
+    end
+end
+local function party_sent_now()   -- a party line of ours just went out (typed or macro)
+    P.party_last = math.max(P.party_last, os.clock())
+end
+
 -- ctx = {src = 'tell' | 'party' | 'local', sender = name}
 local function reply(ctx, text)
     text = '[AA] ' .. text
@@ -219,7 +245,7 @@ local function reply(ctx, text)
         tell(ctx.sender, text)
     elseif ctx.src == 'party' then
         P.said[text:lower()] = os.clock()
-        send('input /p ' .. text)
+        party_say(text)   -- v4.68
     else
         windower.add_to_chat(207, text)
     end
@@ -232,7 +258,7 @@ local handle_command  -- forward
 -- line may not come back to you as a chat message).
 local function party_command(text)
     P.said[text:lower()] = os.clock()
-    send('input /p ' .. text)
+    party_say(text)   -- v4.68
     local me_name = my_name()
     coroutine.schedule(function()
         handle_command({src = 'party', sender = me_name, self = true}, text)
@@ -1307,7 +1333,7 @@ local function cmd_warp(ctx)
     end
     if spell_usable('Warp II') then
         P.warp_mages[my_name()] = true
-        send('input /p [AA] ' .. my_name() .. ': I can Warp II.')
+        party_say('[AA] ' .. my_name() .. ': I can Warp II.')   -- v4.68
     end
     coroutine.sleep(opt('warp_claim_wait'))
     if P.warp_gen ~= wg then return end
@@ -1780,6 +1806,7 @@ end
 
 windower.register_event('outgoing text', function(original, modified)
     local s = clean(modified or original):lower()
+    if s:find('^/p%s') or s:find('^/party%s') then party_sent_now() end   -- v4.68
     local body = s:match('^/p%s+(aa.*)$') or s:match('^/party%s+(aa.*)$')
     if body then run_own_party_line(body) end
 end)
@@ -1790,6 +1817,7 @@ windower.register_event('incoming text', function(original, modified, mode)
     local s = clean(original)
     local who, body = s:match('^%(([%a]+)%)%s*(.*)$')
     if not who or who ~= my_name() or not body then return end
+    party_sent_now()   -- v4.68: any own party line (typed in party mode / macro)
     if body:lower():find('^aa') then run_own_party_line(body) end
 end)
 

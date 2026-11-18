@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.67'
+_addon.version  = '4.68'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -9231,6 +9231,14 @@ v4.67 - Party commands run on the sender too (Mark, 2026-11-18: "most aa
           you -- everyone else follows you.
         * Tells still act only on the character you tell; add "all" (aa
           update all / aa reload all / aa rollback all) to do the party.
+v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
+        sent "/p aa version"; Shadow and Scrach answered, Myth did not).
+        Myth's log shows it ran and sent "/p [AA] Mythrandiir: v4.67 ..."
+        0.57s after its own line; the game dropped it (the reload reply 4s
+        after its line showed). aa_party.lua: every party line from AA
+        (replies, aa ... relays, "I can Warp II.") goes out at least
+        PARTY_GAP (2s) after this character's last party line, typed or
+        AA's -- scheduled, not slept (safe inside aa update's pcall).
 ]]
 
 
