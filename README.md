@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.66** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.67** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -148,6 +148,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 
 * Only characters in `party.friends` (aa_config.lua) are obeyed. Each friend has a `name` and a short `nick` that can be used in commands (`aa invite scrach`).
 * Party-chat commands are only obeyed from friends who are in your party. `/tell` commands work from any friend.
+* A party-chat command runs on **every** AutoAttack in the party, the sender included (`/p aa version` gets a reply from each of you), however you typed it: `/p aa ...`, the chat box in party mode, or a macro (v4.67). The one exception is `aa follow <your name>`: everyone else follows you and you stay put.
 * Every friend runs AutoAttack too: the invite asks the other character's AutoAttack which zone they are in.
 * Replies start with `[AA]`; AutoAttack-to-AutoAttack messages start with `aa~`. Neither is ever taken as a command.
 * Every command can also be typed on your own character as `//aa <command>`. `//aa party` shows your friends, the party settings and what the party code is doing.

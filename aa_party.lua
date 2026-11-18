@@ -8,7 +8,9 @@
     v4.60: aa reload [all], v4.61: slim item lookups (aa_item / aa_item_named),
     v4.62: aa update [all|force] -- newest release from GitHub, then reload,
     v4.64: aa update fix -- no yield inside pcall,
-    v4.65: aa update check | aa version | aa rollback [all] | richer ping)
+    v4.65: aa update check | aa version | aa rollback [all] | richer ping,
+    v4.67: your own party line runs on your own character too, however it
+    was typed (/p, party chat mode, macro) -- caught from the party echo)
 
     Loaded by autoattack.lua. Lets your friends (party.friends in
     aa_config.lua) control this character's AutoAttack with /tell or party
@@ -1751,17 +1753,44 @@ windower.register_event('chat message', function(message, sender, mode, gm)
     coroutine.schedule(function() handle_command(ctx, text) end, 0)
 end)
 
--- your own "/p aa ..." lines: run them here too
-windower.register_event('outgoing text', function(original, modified)
-    local s = clean(modified or original):lower()
-    local body = s:match('^/p%s+(aa.*)$') or s:match('^/party%s+(aa.*)$')
-    if not body or not (body == 'aa' or body:find('^aa%s')) then return end
+-- your own party "aa ..." lines: run them here too, so a party command acts
+-- on every AutoAttack in the party, the sender included (v4.67).
+-- v4.67: before, only an outgoing line starting with "/p" or "/party" was
+-- caught; a line typed with the chat box already in party mode (no /p), or
+-- sent by a macro, never ran on the sender. Now the party echo of your own
+-- line (incoming text mode 5 = party, outgoing -- res/chat.lua) runs it too,
+-- and the /p hook stays as a fallback. P.self_ran stops a double run.
+-- "aa follow <your own name>" still does nothing on you (cmd_follow).
+P.self_ran = P.self_ran or {}
+local function run_own_party_line(body)
+    body = (body or ''):lower():gsub('%s+', ' '):gsub('^%s+', ''):gsub('%s+$', '')
+    if not (body == 'aa' or body:find('^aa%s')) then return end
+    local now = os.clock()
     local t = P.said[body]
-    if t and os.clock() - t < 5 then P.said[body] = nil; return end   -- AA said it (and ran it) already
+    if t and now - t < 5 then return end                 -- AA said it (and ran it) already
+    local r = P.self_ran[body]
+    if r and now - r < 3 then return end                 -- echo + /p hook: run once
+    P.self_ran[body] = now
     local me_name = my_name()
+    dbg('own party line: ' .. body)
     coroutine.schedule(function()
         handle_command({src = 'party', sender = me_name, self = true}, body)
     end, 0.5)
+end
+
+windower.register_event('outgoing text', function(original, modified)
+    local s = clean(modified or original):lower()
+    local body = s:match('^/p%s+(aa.*)$') or s:match('^/party%s+(aa.*)$')
+    if body then run_own_party_line(body) end
+end)
+
+-- v4.67: the party echo of your own line, e.g. "(Shadowhammer) aa version"
+windower.register_event('incoming text', function(original, modified, mode)
+    if mode ~= 5 then return end
+    local s = clean(original)
+    local who, body = s:match('^%(([%a]+)%)%s*(.*)$')
+    if not who or who ~= my_name() or not body then return end
+    if body:lower():find('^aa') then run_own_party_line(body) end
 end)
 
 windower.register_event('party invite', function(sender)

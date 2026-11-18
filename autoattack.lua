@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.66'
+_addon.version  = '4.67'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -9218,6 +9218,19 @@ v4.66 - Ring swap fix (Mark, 2026-11-18: pol.exe crash 00:57:34 on
           commands. The default-ring restore goes out at once; the next
           ring's /equip waits ('RINGS: 2.0s gap before /equip ...').
         * extdata next_use_time is still NOT used (unreliable, see v4.05).
+v4.67 - Party commands run on the sender too (Mark, 2026-11-18: "most aa
+        commands should include the person sending the command ... including
+        'aa version' they should run for each party member").
+        * aa_party.lua: your own party line only ran on you when it was typed
+          as "/p aa ..." / "/party aa ...". Typed with the chat box already in
+          party mode, or sent from a macro, it ran on everyone but you. Now
+          the party echo of your own line (incoming text mode 5) runs it too;
+          the /p hook stays as a fallback and P.self_ran (3s) keeps it to one
+          run. Lines AA said itself (P.said) are still skipped.
+        * Unchanged exception: "aa follow <your own name>" does nothing on
+          you -- everyone else follows you.
+        * Tells still act only on the character you tell; add "all" (aa
+          update all / aa reload all / aa rollback all) to do the party.
 ]]
 
 
