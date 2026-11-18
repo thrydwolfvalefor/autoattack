@@ -229,6 +229,10 @@ local dread_spikes = {enabled = true,
 --   job_weapons    [job] = weapon, for the other players (yours is read from
 --                  your main hand); weapons = {Name = 'weapon'} is used only
 --                  when a player's job isn't known yet
+--   players        {Name = {'WS', ...}} -- that player's WS list, used instead of
+--                  pools[weapon] (v4.73). Your own list always comes from the game.
+--   block_tp       a teammate placed ahead of you keeps the turn from this TP
+--                  (you see their TP a moment late; v4.73)
 --   pools          [weapon] = WS each player with that weapon brings (yours
 --                  only the ones you know); first one isn't preferred --
 --                  the plan picks
@@ -252,6 +256,7 @@ local group_skillchain = {enabled = true,
 	filler_wait_tp = 600,
 	bank_hpp       = 10,     -- v4.71: no new chain at or under this mob HP% (unless 2000+ TP)
 	noshow_max     = 3,      -- v4.71: drop a teammate's WS after they pass on it this many times
+	block_tp       = 500,    -- v4.73: a better-placed teammate keeps their turn from this TP (seen late)
 	once_per_mob   = {['Great Axe'] = 'Full Break'},
 	filler_jobs    = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
 	fillers        = {},
@@ -275,6 +280,7 @@ local group_skillchain = {enabled = true,
 		['Axe']          = {'Decimation', 'Ruinator', 'Cloudsplitter'},
 		['Staff']        = {'Shattersoul', 'Cataclysm', 'Retribution'},
 	},
+	players = {},    -- v4.73: {Scracheebrat = {'Savage Blade'}} -- a player's own WS list instead of pools[weapon]
 	power = {},      -- WS damage (k), e.g. {['Savage Blade'] = 9.0}; built in from the 11-18 logs
 	sc_power = {},   -- v4.72: Light skillchain damage (k) when this WS closes it; built in:
 	                 -- Savage Blade 31.9, Upheaval 25.1, Ukko's Fury 24.6, Fudo 16.2, Shoha 16.1, Kasha 15.1

@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.72'
+_addon.version  = '4.73'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -4749,7 +4749,7 @@ GSC_DEF = {
     enabled = true, min_players = 2, soon_tp = 750,
     window_open = 3.2, window_close = 10.0, window_step = 0, window_min = 8.0, ws_lead = 1.2,
     handoff_wait = 1.5, opener_wait = 2.0, max_steps = 8, plan_depth = 3, filler_wait_tp = 600,
-    bank_hpp = 10, noshow_max = 3,
+    bank_hpp = 10, noshow_max = 3, block_tp = 500,
     once_per_mob = {['Great Axe'] = 'Full Break'},
     filler_jobs = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
     fillers = {},
@@ -4773,7 +4773,7 @@ GSC_DEF = {
         ['Axe']          = {'Decimation', 'Ruinator', 'Cloudsplitter'},
         ['Staff']        = {'Shattersoul', 'Cataclysm', 'Retribution'},
     },
-    power = {}, sc_power = {},
+    power = {}, sc_power = {}, players = {},
 }
 GSC = {on = nil, chain = nil, jobs = {}, began = {}, pre_done = {}, pre_n = 0, mob = 0, mob_since = 0,
        fired_at = 0, said = {}, ids = {}, ids_at = -10, act_at = -10, act_val = false, act_last = nil,
@@ -4890,9 +4890,16 @@ function gsc_is_filler(job, name)
     return false
 end
 -- the WS a player brings: pools[weapon]; yours only the ones you know
-function gsc_pool(weapon, isme, id)
+function gsc_pool(weapon, isme, id, name)
     local pools = gsc_cfg('pools')
     local list = (type(pools) == 'table' and weapon and pools[weapon]) or {}
+    -- v4.73: players = {Name = {'WS', ...}} replaces the weapon pool for that player
+    local pp = gsc_cfg('players')
+    if type(pp) == 'table' and name then
+        for k, v in pairs(pp) do
+            if type(k) == 'string' and k:lower() == name:lower() and type(v) == 'table' and #v > 0 then list = v end
+        end
+    end
     if not isme then   -- v4.71: minus WS this player passed on noshow_max times
         local out, mx = {}, gsc_num('noshow_max')
         for _, ws in ipairs(list) do
@@ -4928,7 +4935,7 @@ function gsc_members()
             out[#out + 1] = {id = mob.id, name = m.name, job = job, me = isme, weapon = weapon,
                 tp = (isme and pl.vitals and pl.vitals.tp) or m.tp or 0,
                 engaged = (isme and pl.status == 1) or ((not isme) and mob.status == 1),
-                filler = gsc_is_filler(job, m.name), pool = gsc_pool(weapon, isme, mob.id)}
+                filler = gsc_is_filler(job, m.name), pool = gsc_pool(weapon, isme, mob.id, m.name)}
         end
     end
     return out, n
@@ -4987,7 +4994,8 @@ end
 function gsc_continuers(mem, props, last_actor)
     local out, soon = {}, gsc_num('soon_tp')
     for _, m in ipairs(mem) do
-        if m.engaged and m.tp >= soon then
+        -- v4.73: a teammate keeps their place from block_tp (their TP is seen late)
+        if m.engaged and m.tp >= (m.me and soon or gsc_num('block_tp')) then
             local best
             for _, ws in ipairs(m.pool) do
                 local r, l, term = gsc_result(props, ws)
@@ -5013,7 +5021,8 @@ function gsc_openers(mem)
     for _, m in ipairs(mem) do
         -- v4.71: a teammate within soon_tp of 1000 keeps their turn -- you see their TP
         -- a moment late (both opened in the same second 5 times on 11-18)
-        if m.engaged and not m.filler and (m.tp >= 1000 or (not m.me and m.tp >= gsc_num('soon_tp'))) then
+        -- v4.73: from block_tp (500) -- 56 same-second WS on v4.72, mostly two openers
+        if m.engaged and not m.filler and (m.tp >= 1000 or (not m.me and m.tp >= gsc_num('block_tp'))) then
             local best
             for _, ws in ipairs(m.pool) do
                 local key = gsc_follow(GSC_WS[ws], gsc_num('plan_depth'), m.id, mem, 1) + gsc_power(ws)
@@ -10034,6 +10043,16 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.73 - Group skillchain: fewer same-second collisions, per-player WS lists
+        (Mark, 2026-11-18 v4.72 review: EP/h ~30.0k, SC dmg/kill 123k, steps
+        3 x141 / 4 x34 -- best so far; but 56 same-second WS, mostly two
+        players opening at once after a chain ended).
+        * block_tp (500): a teammate who would open or continue better than
+          you keeps their turn from 500 TP (was soon_tp 750) -- you see
+          their TP late, so both thought they were first.
+        * group_skillchain.players = {Name = {'WS', ...}}: that player's WS
+          list for the plan instead of pools[weapon] (others can't see what
+          a teammate has learned; your own list is always read from the game).
 v4.72 - Group skillchain: Light-on-Light ends a chain, damage model, timing
         (Mark, 2026-11-18: v4.71 EP/h and DPS a little under v4.70).
         * Light made from two Light-property WS (Ukko's Fury / Fudo, either

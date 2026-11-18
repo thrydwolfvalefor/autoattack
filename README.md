@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.72** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.73** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -524,6 +524,8 @@ When another player is in the party (`group_skillchain.min_players`, default 2 w
 * **Window** (from logs): skillchains formed 4-10 s after the previous WS at every step (2 s never, 3 s about half), so the next WS is sent 3.2 s after the last one lands (`window_open`) and up to `window_close` 10 minus `ws_lead` 1.2; no shrink per step (v4.72).
 * **Light on Light ends the chain** (v4.72): a Light made from two Light-property WS (e.g. Ukko's Fury and Fudo) can't be continued, so the next opener goes instead. A Light made from Fusion + Fragmentation can take one more Light WS.
 * **Damage model** (v4.72): each WS is worth its own damage plus the skillchain damage it closes (`power` / `sc_power`, built in from logs: Light closed by Savage Blade 32k, Upheaval 25k, Ukko's Fury 25k, Shoha 16k).
+* **Turn order** (v4.73): a teammate placed ahead of you keeps the turn from `block_tp` (500 TP), because you see their TP a moment late.
+* **Per-player lists** (v4.73): `players = {Scracheebrat = {'Savage Blade'}}` gives a teammate's exact WS list instead of `pools[weapon]`. Your own list is always read from the game; teammates' lists can't be, so this (or `pools`) is what the others plan with.
 * **No-shows** (v4.71): a teammate who passes on a planned WS `noshow_max` times (3) stops being planned for it this session.
 * **TP bank** (v4.71): no new chain on a mob at or under `bank_hpp` % HP (10) unless you have 2000+ TP; that TP opens the next mob.
 * `//aa gsc` shows what it sees (players, jobs, weapons, TP, pools, last chain). `//aa gsc on|off` overrides `enabled` for this session; `//aa gsc auto` goes back to the config. Also by tell or party chat: `aa gsc off`.
