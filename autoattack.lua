@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.71'
+_addon.version  = '4.72'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -4729,14 +4729,25 @@ GSC_WS = {
 GSC_SKILL = {[1] = 'Hand-to-Hand', [2] = 'Dagger', [3] = 'Sword', [4] = 'Great Sword', [5] = 'Axe',
              [6] = 'Great Axe', [7] = 'Scythe', [8] = 'Polearm', [9] = 'Katana', [10] = 'Great Katana',
              [11] = 'Club', [12] = 'Staff'}
--- average damage (thousands) seen in the 2026-11-18 logs; others count as 5
-GSC_POWER = {['Upheaval'] = 12.8, ["Ukko's Fury"] = 11.4, ['Full Break'] = 2.6,
-             ['Tachi: Shoha'] = 7.8, ['Tachi: Fudo'] = 7.9, ['Tachi: Kasha'] = 7.6, ['Tachi: Rana'] = 4.2,
-             ['Savage Blade'] = 5.4, ['Requiescat'] = 3.0}
+-- v4.72: damage model from the 2026-11-18 logs (thousands).
+-- GSC_POWER   = the WS's own average damage (others count as 6)
+-- GSC_SCPOWER = average Light skillchain damage when this WS closes it (others
+--               18). Skillchain damage follows the closer, not its WS damage:
+--               Savage Blade closes for 32k, Upheaval 25k, Shoha only 16k.
+-- GSC_MULT    = skillchain damage by level, relative to Light (Fusion closed
+--               by Upheaval 13.4k = 0.55); 'end' = Light from two Light WS
+--               (no further step, ~1.25x)
+GSC_POWER = {['Upheaval'] = 15.0, ["Ukko's Fury"] = 13.5, ['Full Break'] = 3.2,
+             ['Tachi: Shoha'] = 7.8, ['Tachi: Fudo'] = 8.0, ['Tachi: Kasha'] = 7.3, ['Tachi: Rana'] = 4.2,
+             ['Savage Blade'] = 7.7, ['Requiescat'] = 3.0, ['Knights of Round'] = 9.0}
+GSC_SCPOWER = {['Upheaval'] = 25.1, ["Ukko's Fury"] = 24.6, ['Tachi: Fudo'] = 16.2, ['Tachi: Shoha'] = 16.1,
+               ['Tachi: Kasha'] = 15.1, ['Savage Blade'] = 31.9, ['Knights of Round'] = 35.7,
+               ['Full Break'] = 8.0, ['Tachi: Rana'] = 10.0}
+GSC_MULT = {[1] = 0.25, [2] = 0.55, [3] = 1.0, ['end'] = 1.25}
 -- defaults for anything missing from aa_config.lua -> group_skillchain
 GSC_DEF = {
     enabled = true, min_players = 2, soon_tp = 750,
-    window_open = 2.5, window_close = 10.0, window_step = 0, window_min = 8.0, ws_lead = 1.0,
+    window_open = 3.2, window_close = 10.0, window_step = 0, window_min = 8.0, ws_lead = 1.2,
     handoff_wait = 1.5, opener_wait = 2.0, max_steps = 8, plan_depth = 3, filler_wait_tp = 600,
     bank_hpp = 10, noshow_max = 3,
     once_per_mob = {['Great Axe'] = 'Full Break'},
@@ -4762,7 +4773,7 @@ GSC_DEF = {
         ['Axe']          = {'Decimation', 'Ruinator', 'Cloudsplitter'},
         ['Staff']        = {'Shattersoul', 'Cataclysm', 'Retribution'},
     },
-    power = {},
+    power = {}, sc_power = {},
 }
 GSC = {on = nil, chain = nil, jobs = {}, began = {}, pre_done = {}, pre_n = 0, mob = 0, mob_since = 0,
        fired_at = 0, said = {}, ids = {}, ids_at = -10, act_at = -10, act_val = false, act_last = nil,
@@ -4784,23 +4795,38 @@ end
 function gsc_power(ws)
     local p = gsc_cfg('power')
     local v = type(p) == 'table' and tonumber(p[ws]) or nil
-    return v or GSC_POWER[ws] or 5
+    return v or GSC_POWER[ws] or 6
 end
--- best skillchain this WS makes on a resonance (list of properties): name, level
+-- v4.72: Light skillchain damage when this WS closes it
+function gsc_scpower(ws)
+    local p = gsc_cfg('sc_power')
+    local v = type(p) == 'table' and tonumber(p[ws]) or nil
+    return v or GSC_SCPOWER[ws] or 18
+end
+-- v4.72: damage of a WS that makes skillchain r (level l, term = chain ends)
+function gsc_value(ws, l, term)
+    return gsc_power(ws) + gsc_scpower(ws) * (term and GSC_MULT['end'] or (GSC_MULT[l] or 0))
+end
+-- best skillchain this WS makes on a resonance (list of properties): name, level,
+-- term. v4.72: term = true when it is Light on Light (or Darkness on Darkness):
+-- the 11-18 logs show a Light made that way is never continued (1 of 156),
+-- while a Light made from Fusion + Fragmentation continues ~80% of the time.
 function gsc_result(props, ws)
     local wp = GSC_WS[ws]
-    if not wp or type(props) ~= 'table' then return nil, 0 end
-    local best, bl = nil, 0
+    if not wp or type(props) ~= 'table' then return nil, 0, false end
+    local best, bl, term = nil, 0, false
     for _, a in ipairs(props) do
         local row = GSC_COMBO[a]
         if row then
             for _, b in ipairs(wp) do
                 local r = row[b]
-                if r and (GSC_LEVEL[r] or 0) > bl then best, bl = r, GSC_LEVEL[r] end
+                local lv = r and (GSC_LEVEL[r] or 0) or 0
+                local t = (a == 'Light' or a == 'Darkness')
+                if r and (lv > bl or (lv == bl and term and not t)) then best, bl, term = r, lv, t end
             end
         end
     end
-    return best, bl
+    return best, bl, term
 end
 -- party IDs (players and Trusts), cached 2s
 function gsc_party_ids()
@@ -4939,10 +4965,10 @@ function gsc_follow(props, depth, prev_id, mem, step)
     for _, m in ipairs(mem) do
         if m.engaged and m.id ~= prev_id and (step > 1 or m.tp >= soon) then
             for _, ws in ipairs(m.pool) do
-                local r, l = gsc_result(props, ws)
+                local r, l, term = gsc_result(props, ws)
                 if r then
-                    local v = l * 10 + gsc_power(ws) - (m.filler and 5 or 0)
-                        + 0.8 * gsc_follow({r}, depth - 1, m.id, mem, step + 1)
+                    local v = gsc_value(ws, l, term) - (m.filler and 2 or 0)
+                        + (term and 0 or 0.8 * gsc_follow({r}, depth - 1, m.id, mem, step + 1))
                     if v > best then best = v end
                 end
             end
@@ -4964,12 +4990,12 @@ function gsc_continuers(mem, props, last_actor)
         if m.engaged and m.tp >= soon then
             local best
             for _, ws in ipairs(m.pool) do
-                local r, l = gsc_result(props, ws)
+                local r, l, term = gsc_result(props, ws)
                 if r then
-                    -- same value as the opener plan (a Fusion that leads to Light beats a
-                    -- dead-end Darkness), plus a little for being ready now
-                    local key = l * 10 + gsc_power(ws) - (m.filler and 5 or 0) + ((m.tp >= 1000) and 2 or 0)
-                        + 0.8 * gsc_follow({r}, gsc_num('plan_depth') - 1, m.id, mem, 2)
+                    -- same value as the opener plan (damage of this WS and its skillchain,
+                    -- plus what can still follow), plus a little for being ready now
+                    local key = gsc_value(ws, l, term) - (m.filler and 2 or 0) + ((m.tp >= 1000) and 2 or 0)
+                        + (term and 0 or 0.8 * gsc_follow({r}, gsc_num('plan_depth') - 1, m.id, mem, 2))
                     -- v4.71: the player who made the last WS goes after everyone else: the
                     -- others see their TP a moment late and would go at the same time
                     if last_actor and m.id == last_actor then key = key - 100 end
@@ -4990,7 +5016,7 @@ function gsc_openers(mem)
         if m.engaged and not m.filler and (m.tp >= 1000 or (not m.me and m.tp >= gsc_num('soon_tp'))) then
             local best
             for _, ws in ipairs(m.pool) do
-                local key = gsc_follow(GSC_WS[ws], gsc_num('plan_depth'), m.id, mem, 1) + 0.1 * gsc_power(ws)
+                local key = gsc_follow(GSC_WS[ws], gsc_num('plan_depth'), m.id, mem, 1) + gsc_power(ws)
                 if not best or key > best.key then best = {m = m, ws = ws, key = key} end
             end
             if best then out[#out + 1] = best end
@@ -5061,6 +5087,9 @@ function gsc_tick()
             for k, cd in ipairs(cands) do
                 if cd.m.me then
                     local go_at = open_t + (k - 1) * gsc_num('handoff_wait')
+                    -- v4.72: continuing your own WS: always one handoff later (teammates
+                    -- see your TP late and may already be going)
+                    if c.actor == me.id then go_at = math.max(go_at, open_t + gsc_num('handoff_wait')) end
                     if ready and now >= go_at then
                         return gsc_fire(t, cd.ws, string.format('%s >> %s = %s (step %d)',
                             tostring(c.label), cd.ws, cd.res, (c.step or 1) + 1))
@@ -5106,6 +5135,8 @@ function gsc_tick()
     if me.filler then
         -- magic burst first, then save the opener for a melee who is close to 1000 TP
         if skillchain_time and (now - skillchain_time) < (SC_WINDOW + 0.5) then return 'wait' end
+        -- v4.72: give the melee two opener turns first (8 of 24 v4.71 collisions)
+        if now < idle_since + 2 * gsc_num('opener_wait') then return 'wait' end
         if my_tp < 2900 then
             for _, m in ipairs(mem) do
                 if not m.me and not m.filler and m.engaged and m.tp >= gsc_num('filler_wait_tp') then
@@ -5185,8 +5216,12 @@ function gsc_on_action(act)
     end
     if sc then
         local step = ((c and c.target == t1.id) and (c.step or 1) or 1) + 1
-        GSC.chain = {target = t1.id, t = now, props = {sc}, step = step, label = sc, actor = act.actor_id}
-        debug_msg('GSC: ' .. name .. ' made ' .. sc .. ' (step ' .. step .. ').')
+        -- v4.72: Light made on Light (Darkness on Darkness) can't be continued
+        local _, _, term = gsc_result((c and c.target == t1.id) and c.props or {}, name)
+        local ends = term and (sc == 'Light' or sc == 'Darkness')
+        GSC.chain = {target = t1.id, t = now, props = ends and {} or {sc}, step = step,
+                     label = ends and (sc .. ' (end)') or sc, actor = act.actor_id}
+        debug_msg('GSC: ' .. name .. ' made ' .. sc .. ' (step ' .. step .. (ends and ', chain ends' or '') .. ').')
     else
         GSC.chain = {target = t1.id, t = now, props = props, step = 1, label = name, actor = act.actor_id}
     end
@@ -9999,6 +10034,22 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.72 - Group skillchain: Light-on-Light ends a chain, damage model, timing
+        (Mark, 2026-11-18: v4.71 EP/h and DPS a little under v4.70).
+        * Light made from two Light-property WS (Ukko's Fury / Fudo, either
+          order) was continued 1 time in 156; Light made from Fusion +
+          Fragmentation 70-82%. That Light now ends the chain (plan and
+          tracker), so nobody spends a WS on it -- the next opener goes.
+        * Plan value = the WS's damage + the skillchain damage it closes,
+          from the logs (GSC_POWER, GSC_SCPOWER, GSC_MULT; config power /
+          sc_power override). Light by closer: Savage Blade 32k, Upheaval
+          25k, Ukko's Fury 25k, Shoha 16k, Fudo 16k, Kasha 15k -- so Shoha /
+          Kasha open and Upheaval / Savage Blade / Ukko's Fury close.
+        * window_open 2.5 -> 3.2 (WS lands ~4s after the last one: 2s gaps
+          never chained, 3s about half, 4-9s reliably), ws_lead 1.0 -> 1.2.
+        * Continuing your own WS always waits one handoff_wait; fillers
+          (Scrach) open only after two opener turns -- 8 of v4.71's 24
+          same-second collisions were Savage Blade on top of a melee WS.
 v4.71 - Group skillchain tuning from the first v4.70 hour (Mark, 2026-11-18:
         kill cycle 68s -> 46s, EP/h ~19.7k -> ~32k, no refused JAs; but
         chains stopped at 2-3 steps and players collided).

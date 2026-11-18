@@ -232,17 +232,19 @@ local dread_spikes = {enabled = true,
 --   pools          [weapon] = WS each player with that weapon brings (yours
 --                  only the ones you know); first one isn't preferred --
 --                  the plan picks
---   power          {['WS name'] = damage} -- picks the harder-hitting closer
---                  (built in: Upheaval 12.8, Ukko's Fury 11.4, Shoha 7.8 ...)
+--   power          {['WS name'] = WS damage in thousands}; sc_power = the
+--                  Light skillchain damage when it closes (v4.72, built in from
+--                  logs). The plan adds both. Light made from two Light WS
+--                  ends the chain (it can't be continued).
 -- ---------------------------------------------------------------------------
 local group_skillchain = {enabled = true,
 	min_players    = 2,
 	soon_tp        = 750,
-	window_open    = 2.5,    -- v4.71: from logs, SCs formed 2-10s after the previous WS
+	window_open    = 3.2,    -- v4.72: lands ~4s after the last WS (2s never chained, 3s half, 4-9s reliably)
 	window_close   = 10.0,
 	window_step    = 0,      -- v4.71: the window did not shrink with steps
 	window_min     = 8.0,
-	ws_lead        = 1.0,
+	ws_lead        = 1.2,
 	handoff_wait   = 1.5,
 	opener_wait    = 2.0,
 	max_steps      = 8,
@@ -273,7 +275,9 @@ local group_skillchain = {enabled = true,
 		['Axe']          = {'Decimation', 'Ruinator', 'Cloudsplitter'},
 		['Staff']        = {'Shattersoul', 'Cataclysm', 'Retribution'},
 	},
-	power = {},   -- e.g. {['Savage Blade'] = 9.0} for a stronger sword
+	power = {},      -- WS damage (k), e.g. {['Savage Blade'] = 9.0}; built in from the 11-18 logs
+	sc_power = {},   -- v4.72: Light skillchain damage (k) when this WS closes it; built in:
+	                 -- Savage Blade 31.9, Upheaval 25.1, Ukko's Fury 24.6, Fudo 16.2, Shoha 16.1, Kasha 15.1
 	}
 
 -- ---------------------------------------------------------------------------
