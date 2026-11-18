@@ -23,6 +23,7 @@
         //aa debug [0|1|2]  debug level: 0 off, 1 release (minimal), 2 dev (deep + timing)
         //aa ds [clear]     Dread Spikes tracking: list the mobs it knows about / clear it
         //aa ws [off|on]    weapon skills off / back on until the addon is reloaded
+        //aa config new     settings your aa_config.lua doesn't have yet (defaults in use)
 
     Party commands (v4.44, aa_party.lua) -- also sent by friends as
     "/tell <you> aa <command>" or "/p aa <command>" (party.friends in aa_config.lua):
@@ -49,7 +50,7 @@
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.62'
+_addon.version  = '4.63'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -63,6 +64,52 @@ _addon.commands = {'autoattack', 'aa'}
 -- Globals on purpose (main chunk / main loop are at the local/upvalue limit).
 AA_CONFIG_FILE   = 'aa_config.lua'
 AA_DEFAULTS_FILE = 'aa_config_defaults.lua'
+-- v4.63: settings missing from aa_config.lua are filled from the defaults at
+-- EVERY level (was top level only), so a new setting inside an existing
+-- block (party.xyz, a job's pull.xyz ...) works after "aa update" without
+-- anyone editing their file. It only ever ADDS what is missing -- never
+-- changes a value the player set -- and never adds:
+--   * list items (abilities / magic / item_food / cure entries -- numbered)
+--   * lists (trust groups, ws_list modes, mob lists, friends ...)
+--   * whole jobs under job_config (a job the player removed stays removed)
+-- AA_CFG_NEW lists what was filled in; //aa config new shows it.
+AA_CFG_COLLECTIONS = {job_config = true}   -- keys under these are the player's own
+AA_CFG_NEW = {}
+function aa_cfg_islist(t) return type(t) == 'table' and t[1] ~= nil end
+function aa_cfg_copy(v)
+    if type(v) ~= 'table' then return v end
+    local t = {}
+    for k, x in pairs(v) do t[k] = aa_cfg_copy(x) end
+    return t
+end
+function aa_cfg_fill(cfg, def, path, depth)
+    for k, dv in pairs(def) do
+        if type(k) == 'string' then
+            local p = (path == '') and k or (path .. '.' .. k)
+            local cv = cfg[k]
+            if cv == nil then
+                if depth == 0 or not (AA_CFG_COLLECTIONS[path] or aa_cfg_islist(dv)) then
+                    cfg[k] = aa_cfg_copy(dv)
+                    AA_CFG_NEW[#AA_CFG_NEW + 1] = {path = p, value = dv}
+                end
+            elseif type(cv) == 'table' and type(dv) == 'table' and depth < 8
+                   and not aa_cfg_islist(cv) and not aa_cfg_islist(dv) then
+                aa_cfg_fill(cv, dv, p, depth + 1)
+            end
+        end
+    end
+end
+function aa_cfg_fmt(v)
+    if type(v) == 'string' then return string.format('%q', v) end
+    if type(v) ~= 'table' then return tostring(v) end
+    local parts, n = {}, 0
+    for k, x in pairs(v) do
+        n = n + 1
+        if #parts < 4 and type(x) ~= 'table' then parts[#parts + 1] = tostring(k) .. ' = ' .. aa_cfg_fmt(x) end
+    end
+    if n == 0 then return '{}' end
+    return '{' .. table.concat(parts, ', ') .. ((n > #parts) and ((#parts > 0) and ', ...' or '...') or '') .. '}'
+end
 function aa_load_config()
     local dir = windower.addon_path
     local function try(name)
@@ -95,13 +142,13 @@ function aa_load_config()
         end
         error('[AA] Could not load ' .. AA_DEFAULTS_FILE .. ' either: ' .. tostring(derr))
     end
-    if def then  -- a setting missing from aa_config.lua comes from the defaults
-        for k, v in pairs(def) do
-            if cfg[k] == nil then
-                cfg[k] = v
-                windower.add_to_chat(207, '[AA] ' .. AA_CONFIG_FILE .. ' has no ' .. tostring(k) .. ' -- using the default.')
-            end
-        end
+    -- v4.63: a setting missing from aa_config.lua comes from the defaults, at
+    -- every level (see aa_cfg_fill); one summary line instead of one per setting
+    AA_CFG_NEW = {}
+    if def then aa_cfg_fill(cfg, def, '', 0) end
+    if #AA_CFG_NEW > 0 then
+        windower.add_to_chat(207, string.format('[AA] %s: %d new setting%s using defaults -- //aa config new to see them',
+            AA_CONFIG_FILE, #AA_CFG_NEW, (#AA_CFG_NEW == 1) and '' or 's'))
     end
     return cfg
 end
@@ -8982,6 +9029,23 @@ v4.62 - aa update (Mark, 2026-11-18: "'aa update' would download, tell
           your own debug settings.
         * tools/make_release.py writes manifest.txt (version + file sizes)
           into realeases/autoattack/ and forces dev = {} in the defaults.
+v4.63 - Updates never wipe a player's settings (Mark, 2026-11-18: "how are
+        we handling aa_config so that players that get an update from github
+        are not getting their own configs wiped out?").
+        * aa update never touches aa_config.lua (only the four listed files),
+          and releases ship only aa_config_defaults.lua (v4.62).
+        * NEW: settings missing from aa_config.lua are filled from the
+          defaults at every level, not just the top. Only adds what is
+          missing, never changes a value. Never adds list items (numbered
+          abilities / magic / food / cure entries), lists (trust groups,
+          ws_list modes, mob lists, friends) or whole jobs under
+          job_config -- the player's own lists and jobs stay as written.
+        * One chat line instead of one per setting: "[AA] aa_config.lua: N
+          new settings using defaults -- //aa config new to see them".
+          //aa config new lists each one with its default value.
+        * Rule from now on: settings are not renamed or removed in a way
+          that breaks an older aa_config.lua; a renamed setting keeps
+          accepting the old name for a while, and the changelog says so.
 ]]
 
 
@@ -9306,6 +9370,18 @@ windower.register_event('addon command', function(command, ...)
         windower.add_to_chat(8, '[AutoAttack] Target mode: ' .. tostring(settings.target_mode) ..
             ((settings.target_mode == 'native') and ' (no injected packets -- uses /targetbnpc)'
                                                   or ' (injected 0x058 target lock)'))
+    elseif command == 'config' then
+        -- v4.63: //aa config new -- settings aa_config.lua doesn't have (defaults in use)
+        local list = AA_CFG_NEW or {}
+        if #list == 0 then
+            windower.add_to_chat(207, '[AA] ' .. AA_CONFIG_FILE .. ' has every setting -- nothing new.')
+        else
+            windower.add_to_chat(207, '[AA] ' .. #list .. ' setting(s) not in ' .. AA_CONFIG_FILE ..
+                ' -- these defaults are in use (copy a line into ' .. AA_CONFIG_FILE .. ' to change it):')
+            for _, e in ipairs(list) do
+                windower.add_to_chat(207, '[AA]   ' .. e.path .. ' = ' .. aa_cfg_fmt(e.value))
+            end
+        end
     elseif command == 'rings' then
         -- v4.08: //aa rings [reset] -- show ring waits; reset clears them all
         local _now = os.time()

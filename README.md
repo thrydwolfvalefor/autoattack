@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.62** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.63** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -623,6 +623,8 @@ AutoAttack has three debug levels (v4.25), set with `debug_level` at the top of 
 * If the game shows "Invalid argument" in the console, set `cmd_mode = true` (or use level 2 with the file log), reproduce it, and look at the `[CMD]` line just above the error.
 * If an item or tool is not recognised, run `//aa dumpinv` and compare the name to your config.
 * Level 2 is very verbose; go back to `//aa debug 1` for normal play.
+
+**Updates and your settings (v4.63).** `aa update` only replaces `autoattack.lua`, `aa_party.lua`, `aa_config_defaults.lua` and `README.md`; your `aa_config.lua` is never touched. When a new version adds a setting your `aa_config.lua` doesn't have, the default is used (at any level, e.g. a new `party` option or a new field in a job's `pull` block) and one line tells you: `[AA] aa_config.lua: N new settings using defaults -- //aa config new to see them`. `//aa config new` lists them with their default values; copy a line into your `aa_config.lua` to change it. Your own lists (abilities, magic, food, trust groups, WS lists, mob lists, friends) and jobs are never added to or changed.
 
 **Dev settings (v4.62).** `dev = {debug_level = 2, debug_log_file = true}` in aa_config.lua overrides the debug values at the top of autoattack.lua (also `cmd_mode`, `ws_blocked_debug`), so `aa update` never resets them. Leave it `{}` to use the file's values.
 
