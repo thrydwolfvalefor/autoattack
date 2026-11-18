@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.73'
+_addon.version  = '4.74'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -759,13 +759,35 @@ local res = require('resources')
 -- resource table (res.items is ~28k entries) and was being run every combat tick
 -- for every ring / spell / ability entry. Resources never change at runtime.
 local _res_cache = {}
+-- v4.74: never a Lua error. 2026-11-18 (ASUS, v4.73): "autoattack.lua:768
+-- attempt to call method 'with' (a nil value)" -- a resource table that
+-- can't be searched (the item list failed to load and the slim item proxy
+-- handed back an empty table). Items by name now go through aa_item_named();
+-- any other table without :with logs once and returns nil (not cached, so
+-- it is tried again later).
+res_with_warned = {}
 local function res_with(tbl_name, field, value)
     if value == nil then return nil end
     local key = tbl_name .. '|' .. field .. '|' .. tostring(value)
     local hit = _res_cache[key]
     if hit ~= nil then return hit or nil end
-    local tbl = res[tbl_name]
-    local found = tbl and tbl:with(field, value) or nil
+    local found
+    if tbl_name == 'items' and (field == 'english' or field == 'en' or field == 'name') then
+        found = aa_item_named(value)
+        if found == nil and aa_items_failed then return nil end   -- list didn't load: try again later
+    else
+        local tbl = res[tbl_name]
+        local f = type(tbl) == 'table' and tbl.with or nil
+        if type(f) ~= 'function' then
+            if not res_with_warned[tbl_name] then
+                res_with_warned[tbl_name] = true
+                if info_msg then info_msg('RES: res.' .. tostring(tbl_name) .. ' could not be searched (' ..
+                    tostring(field) .. ' = ' .. tostring(value) .. ') -- skipped, will try again.') end
+            end
+            return nil
+        end
+        found = f(tbl, field, value)
+    end
     _res_cache[key] = found or false
     return found
 end
@@ -782,18 +804,28 @@ ITEMS_KEEP_SECS    = 10
 aa_item_cache      = {}    -- [id] = res entry | false (no such item)
 aa_item_name_cache = {}    -- [lowercase english name] = res entry | false
 aa_items_real      = nil   -- the full res.items while it is loaded
+aa_items_failed    = false -- v4.74: the last load failed
+aa_items_retry_at  = 0     -- v4.74: no new load before this os.clock()
+ITEMS_RETRY_SECS   = 120
 aa_items_loaded_at = nil   -- os.clock() of the last use of the full list
 aa_items_loads     = 0     -- times the full list was loaded (HEARTBEAT line)
 function aa_items_full(why)
     if not aa_items_real then
+        -- v4.74: after a failed load wait ITEMS_RETRY_SECS before trying 20 MB again
+        -- (ASUS 11-18 16:29: "not enough memory" every 1-2s)
+        if aa_items_failed and os.clock() < aa_items_retry_at then return {} end
         local t0 = os.clock()
         rawset(res, 'items', nil)
         local ok, full = pcall(function() return res.items end)   -- Windower loads res/items.lua
         rawset(res, 'items', aa_items_proxy)
-        if not ok or type(full) ~= 'table' then
-            if aa_log then aa_log(1, 'ITEMS: could not load the item list: ' .. tostring(full)) end
+        if not ok or type(full) ~= 'table' or type(full.with) ~= 'function' then
+            aa_items_failed = true   -- v4.74: misses aren't cached while the list is down
+            aa_items_retry_at = os.clock() + ITEMS_RETRY_SECS
+            if aa_log then aa_log(1, 'ITEMS: could not load the item list: ' .. tostring(ok and type(full) or full) ..
+                ' -- next try in ' .. ITEMS_RETRY_SECS .. 's (rings / food wait; restarting the game client frees memory).') end
             return {}
         end
+        aa_items_failed = false
         aa_items_real = full
         aa_items_loads = aa_items_loads + 1
         if aa_log then aa_log(2, string.format('ITEMS: full item list loaded (%s) in %.2fs', tostring(why), os.clock() - t0)) end
@@ -807,6 +839,7 @@ function aa_item(id)
     local hit = aa_item_cache[id]
     if hit ~= nil then return hit or nil end
     local it = aa_items_full('item ' .. id)[id]
+    if it == nil and aa_items_failed then return nil end   -- v4.74
     aa_item_cache[id] = it or false
     return it
 end
@@ -823,6 +856,7 @@ function aa_item_named(name)
             if it.en == name then break end
         end
     end
+    if found == nil and aa_items_failed then return nil end   -- v4.74: list didn't load
     aa_item_name_cache[key] = found or false
     if found and found.id then aa_item_cache[found.id] = found end
     return found
@@ -830,6 +864,9 @@ end
 aa_items_proxy = setmetatable({}, {__index = function(_, k)
     if type(k) == 'number' then return aa_item(k) end
     local v = aa_items_full('res.items.' .. tostring(k))[k]
+    if v == nil and type(k) == 'string' and type(table[k]) == 'function' then
+        return function() return nil end   -- v4.74: item list didn't load -- no Lua error
+    end
     if type(v) == 'function' then   -- res.items:with(...) and the other table methods
         return function(self, ...)
             if self == aa_items_proxy then self = aa_items_full() end
@@ -10043,6 +10080,18 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.74 - Fix: "autoattack.lua:768 attempt to call method 'with' (a nil
+        value)" (Mark, 2026-11-18, ASUS on v4.73). res_with() called :with on
+        a resource table that couldn't be searched -- the slim item proxy
+        returns an empty table when the full item list fails to load.
+        * Items by name (rings, food) go through aa_item_named().
+        * Any other table without :with: one "RES: ... could not be
+          searched" line, nil, tried again later.
+        * Item list load failure ("not enough memory" on the ASUS after a
+          long session -- the game client, not AA, which used ~4 MB):
+          next load try after ITEMS_RETRY_SECS (120s); misses aren't cached
+          while it is down (a ring isn't lost for the session), and the
+          proxy's table methods return nil instead of erroring.
 v4.73 - Group skillchain: fewer same-second collisions, per-player WS lists
         (Mark, 2026-11-18 v4.72 review: EP/h ~30.0k, SC dmg/kill 123k, steps
         3 x141 / 4 x34 -- best so far; but 56 same-second WS, mostly two
