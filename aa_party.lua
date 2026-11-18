@@ -7,7 +7,8 @@
     v4.58: aa disband clears a leftover party of 1,
     v4.60: aa reload [all], v4.61: slim item lookups (aa_item / aa_item_named),
     v4.62: aa update [all|force] -- newest release from GitHub, then reload,
-    v4.64: aa update fix -- no yield inside pcall)
+    v4.64: aa update fix -- no yield inside pcall,
+    v4.65: aa update check | aa version | aa rollback [all] | richer ping)
 
     Loaded by autoattack.lua. Lets your friends (party.friends in
     aa_config.lua) control this character's AutoAttack with /tell or party
@@ -26,7 +27,7 @@
       fight | stop | stack | follow [name] | unfollow | cancel
       disband | leave | leader <name> | sync <name> | unsync
       trusts [group] | retr | retrust | rest | mount [name] | dismount | pass | lot
-      status | ping | help | reload [all] | update [all|force]
+      status | ping | help | version | reload [all] | update [all|force|check] | rollback [all]
       pull [dir] | assist | ws on|off | move <mode> | ds [clear]   (pass-through)
       //aa party   (typed only) -- friends, settings and what the party code is doing
 
@@ -748,6 +749,7 @@ local HELP = {
     'aa warp | aa 299  (party: a Warp II mage warps everyone, else each uses its Warp Ring)',
     'aa reload  (/t: that character, /p: everyone) | aa reload all  (whole party)',
     'aa update [all|force]  (download the newest AutoAttack from GitHub, then reload)',
+    'aa update check | aa version  (compare with GitHub)  |  aa rollback  (back to the version before the last update)',
 }
 
 local function cmd_follow(ctx, w)
@@ -1537,7 +1539,46 @@ local function do_update(ctx, force)
     say('UPDATE: v' .. have .. ' -> v' .. ver .. ' installed, reloading.')
     reload_now(ctx, have)
 end
+-- v4.65: aa update check / aa version -- compare with GitHub, install nothing
+local function cmd_update_check(ctx)
+    local me_n, have = my_name(), tostring(_addon.version)
+    local base = opt('update_url') or UPDATE_URL
+    if base:sub(-1) ~= '/' then base = base .. '/' end
+    local man, e = http_get(base .. 'manifest.txt')
+    if not man then return reply(ctx, me_n .. ': v' .. have .. ' -- could not read GitHub (' .. tostring(e) .. ').') end
+    local ver = man:match('version%s*=%s*([%d%.]+)')
+    if not ver then return reply(ctx, me_n .. ': v' .. have .. ' -- GitHub manifest has no version.') end
+    local c = ver_cmp(ver, have)
+    local st = (c == 0) and 'up to date' or (c > 0) and '"aa update" to install' or 'newer than GitHub'
+    reply(ctx, string.format('%s: v%s (GitHub: v%s) -- %s', me_n, have, ver, st))
+end
+
+-- v4.65: aa rollback [all] -- back to the newest version an aa update backed up
+local function cmd_rollback(ctx, w)
+    if w[2] == 'all' and ctx.src ~= 'party' and has_players() then
+        if ctx.src == 'tell' then reply(ctx, my_name() .. ': rolling back the whole party.') end
+        return party_command('aa rollback')
+    end
+    local me_n, cur = my_name(), tostring(_addon.version)
+    if engaged() or party_fighting() then
+        return reply(ctx, me_n .. ': fighting -- send "aa rollback" again after the fight.')
+    end
+    if not (aa_rollback_find and aa_rollback_restore) then
+        return reply(ctx, me_n .. ': rollback needs autoattack.lua v4.65 or later.')
+    end
+    local set = aa_rollback_find(cur)
+    if not set then
+        return reply(ctx, me_n .. ': no earlier version backed up by "aa update" -- nothing to roll back to.')
+    end
+    local ok, why = aa_rollback_restore(set)
+    if not ok then return reply(ctx, me_n .. ': rollback failed -- ' .. tostring(why)) end
+    reply(ctx, me_n .. ': rolled back to v' .. set.ver .. ' -- reloading...')
+    say('ROLLBACK: v' .. cur .. ' -> v' .. set.ver .. ' (from ' .. tostring(ctx.sender) .. ').')
+    reload_now(ctx, cur)
+end
+
 local function cmd_update(ctx, w)
+    if w[2] == 'check' then return cmd_update_check(ctx) end   -- v4.65
     if w[2] == 'all' and ctx.src ~= 'party' and has_players() then
         if ctx.src == 'tell' then reply(ctx, my_name() .. ': updating the whole party.') end
         return party_command('aa update')
@@ -1617,9 +1658,16 @@ handle_command = function(ctx, text)
     elseif c == 'lot' then cmd_pool(ctx, true)
     elseif c == 'retrust' then cmd_retrust(ctx)
     elseif c == 'status' then reply(ctx, status_line())
-    elseif c == 'ping' then reply(ctx, my_name() .. ' AutoAttack v' .. tostring(_addon.version))
+    elseif c == 'ping' then   -- v4.65: name, version, job, mode, memory
+        local pl = me()
+        local job = pl and ((pl.main_job or '?') .. tostring(pl.main_job_level or '') .. '/' .. (pl.sub_job or '-')) or '?'
+        local mode = aa_running() and tostring(aa_get_mode and aa_get_mode() or 'on'):upper() or 'idle'
+        reply(ctx, string.format('%s v%s | %s | %s | %.1f MB', my_name(), tostring(_addon.version), job, mode,
+            collectgarbage('count') / 1024))
     elseif c == 'reload' or c == 'rl' then cmd_reload(ctx, w)   -- v4.60
     elseif c == 'update' then cmd_update(ctx, w)                 -- v4.62
+    elseif c == 'version' then cmd_update_check(ctx)             -- v4.65
+    elseif c == 'rollback' then cmd_rollback(ctx, w)             -- v4.65
     elseif c == 'help' then
         if ctx.src ~= 'party' or not ctx.self then
             for _, line in ipairs(HELP) do reply(ctx, line); coroutine.sleep(1) end
@@ -1644,7 +1692,7 @@ local LOCAL = {invite = true, fight = true, stack = true, follow = true, unfollo
                sync = true, unsync = true, trusts = true, retr = true, rest = true,
                mount = true, dismount = true, pass = true, status = true, ping = true,
                lot = true, retrust = true, sneak = true, invis = true, invisible = true,
-               warp = true, ['299'] = true, reload = true, rl = true, update = true}
+               warp = true, ['299'] = true, reload = true, rl = true, update = true, rollback = true, version = true}
 
 function aa_party_command(command, args)
     if command == 'stop' then
@@ -1849,6 +1897,8 @@ do
         os.remove(RELOAD_FILE)
         local src, sender, t, from = line:match('^(%a+)\t([^\t]*)\t(%d+)\t?([^\t]*)')
         t = tonumber(t)
+        -- v4.65: keep it for autoattack.lua's safe start (rollback if the rest fails to load)
+        if src then AA_RELOAD_NOTE = {src = src, sender = sender, t = t, from = from} end
         if src and t and os.time() - t <= 120 then
             coroutine.schedule(function()
                 for _ = 1, 30 do

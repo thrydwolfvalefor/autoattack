@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.64** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.65** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -11,7 +11,7 @@ Current version: **4.64** (see the changelog block at the bottom of `autoattack.
 ## Contents
 
 1. [Requirements](#requirements)
-2. [Installation](#installation)
+2. [Installation & updates](#installation--updates)
 3. [Quick start](#quick-start)
 4. [Commands](#commands)
 5. [Party commands](#party-commands) (v4.44)
@@ -43,12 +43,29 @@ alias aa lua c autoattack
 
 ---
 
-## Installation
+## Installation & updates
 
-1. Copy the `autoattack` folder into `Windower4\addons\`. The addon file must be `Windower4\addons\autoattack\autoattack.lua`.
-2. In game, run `//lua load autoattack`. The first time, it creates `aa_config.lua` from `aa_config_defaults.lua` and says so in chat. You will see an `[AA] AutoAttack v4.56 loaded` line with your current zone and target mode.
+### First install
+
+1. Copy the `autoattack` folder into `Windower4\addons\`. The addon file must be `Windower4\addons\autoattack\autoattack.lua`. (The newest release is at https://github.com/thrydwolfvalefor/autoattack: **Code -> Download ZIP**.)
+2. In game, run `//lua load autoattack`. The first time, it creates `aa_config.lua` from `aa_config_defaults.lua` and says so in chat.
 3. Add the `alias aa lua c autoattack` line above to your Windower `init.txt` if you want to type `//aa`. Otherwise use the long form, `//lua c autoattack <command>`.
 4. Open `aa_config.lua` in a text editor and review your settings (see [Configuration](#configuration)). Reload with `//lua r autoattack` after any change. The shipped job tables contain example trusts, spells, ability lists and ring names; change them to match your character before your first run.
+
+### Updating (v4.64 or later)
+
+| Command | What it does |
+|---|---|
+| `aa update check` / `aa version` | Replies with your version and the newest on GitHub, e.g. `v4.65 (GitHub: v4.66) -- "aa update" to install`. Installs nothing. |
+| `aa update` | Downloads the newest release, checks it, backs up your current files to `backups\`, installs it and reloads. Replies `downloaded v<new> -- reloading...`, then `updated and reloaded -- AutoAttack v<new> (was v<old>)`. |
+| `aa reload` | Only reloads the files already on the PC (after you edit `aa_config.lua`, for example). Downloads nothing. |
+| `aa rollback` | Goes back to the version before the last `aa update` (v4.65+). |
+
+* By `/tell` a command acts on that character; in party chat (`/p aa update`) on every AutoAttack in the party; add `all` (`aa update all`) to do the whole party from a `/tell` or your own `//aa`.
+* **Your settings are safe.** `aa update` only replaces `autoattack.lua`, `aa_party.lua`, `aa_config_defaults.lua` and `README.md`. Your `aa_config.lua`, `data\` folder and logs are never touched. New settings use their defaults until you add them yourself: `//aa config new` lists them.
+* **Just published?** GitHub can serve the old files for about 5 minutes after a new release. The update checks every file and stops with `try again in a few minutes` if it gets an old one -- nothing is changed.
+* **If an update fails** (`update failed -- ...`), nothing was changed. If the new version installs but fails to start, AutoAttack puts the previous version back by itself (v4.65+) and says `v<new> failed to start (...) -- rolled back to v<old>`. Send the error to whoever maintains the release.
+* Updates are refused while you're fighting.
 
 ---
 
@@ -157,7 +174,9 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | `pass` | Passes every item in the treasure pool. |
 | `lot` | Lots on every item in the treasure pool (v4.45). |
 | `status` | Replies with job, AutoAttack mode, HP/MP/TP, leader, and what the party code is doing. |
-| `ping` | Replies with the AutoAttack version (spot a friend on an old version). |
+| `ping` | Replies with name, version, job, mode and memory, e.g. `Scracheebrat v4.65 \| WAR99/SAM \| PULL \| 4.1 MB` (v4.65). |
+| `version` (or `update check`) | Replies with this version and the newest on GitHub; installs nothing (v4.65). |
+| `rollback [all]` | Goes back to the version before the last `aa update` (v4.65). Refused while fighting. |
 | `help` | Replies with the command list. |
 | `reload [all]` (or `rl`) | Reloads AutoAttack (`//lua r autoattack`) (v4.60). By `/tell`: just that character. In party chat: every AutoAttack in the party. `reload all` (typed or by `/tell`): says `/p aa reload`, so the whole party reloads, including the sender. After the reload each one answers in the same channel with `[AA] <name>: reloaded -- AutoAttack v<version>`. The reload stops AutoAttack, so send `fight` / `pull` / `assist` again afterwards. |
 | `update [all\|force]` | Downloads the newest release from GitHub (`thrydwolfvalefor/autoattack`, or `party.update_url` in aa_config.lua), checks every file, backs the current files up to `backups\`, installs the new ones, replies `downloaded v<new> -- reloading...`, reloads, then replies `updated and reloaded -- AutoAttack v<new> (was v<old>)` (v4.62). Only `autoattack.lua`, `aa_party.lua`, `aa_config_defaults.lua` and `README.md` are replaced; your `aa_config.lua`, `data\` and logs are never touched. By `/tell`: that character; in party chat: every AutoAttack in the party; `update all`: the whole party. Already current: `already on v...`. `force` re-installs or allows an older version. Refused while fighting. `reload` only reloads the files already on the PC. Needs v4.64 or later (the v4.62 / v4.63 updater was broken). |

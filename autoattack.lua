@@ -24,6 +24,8 @@
         //aa ds [clear]     Dread Spikes tracking: list the mobs it knows about / clear it
         //aa ws [off|on]    weapon skills off / back on until the addon is reloaded
         //aa config new     settings your aa_config.lua doesn't have yet (defaults in use)
+        //aa version        this version and the newest on GitHub (= aa update check)
+        //aa rollback       back to the version before the last aa update
 
     Party commands (v4.44, aa_party.lua) -- also sent by friends as
     "/tell <you> aa <command>" or "/p aa <command>" (party.friends in aa_config.lua):
@@ -32,7 +34,7 @@
         //aa disband | leave | leader <name> | sync <name> | unsync
         //aa trusts [group] | retr | retrust | rest | mount [name] | dismount | pass | lot
         //aa sneak | invis | sneak invis | warp (or 299)
-        //aa status | ping | party | reload [all] | update [all|force]
+        //aa status | ping | party | reload [all] | update [all|force|check] | rollback [all]
 
         ("//aa" works directly; "//lua c autoattack <command>" also works.)
 
@@ -48,9 +50,102 @@
     consequences of using this addon.
 ]]
 
+-- ===========================================================================
+-- v4.65: SAFE START + ROLLBACK. Everything below runs inside AA_MAIN()
+-- (closed at the bottom of this file) under xpcall. If AutoAttack fails to
+-- start right after an "aa update" (data/reload_notify.txt, or AA_RELOAD_NOTE
+-- if aa_party.lua already read it, names the version it came from), the files
+-- that update backed up are put back, the sender is told why, and AutoAttack
+-- reloads on the old version. aa_party.lua failing to load after an update
+-- does the same. "aa rollback" uses these functions to go back by hand.
+-- Kept small and outside AA_MAIN on purpose: it has to work when the rest
+-- doesn't. Globals on purpose.
+-- ===========================================================================
+AA_UPDATE_FILES = {'autoattack.lua', 'aa_party.lua', 'aa_config_defaults.lua', 'README.md'}
+-- newest set of files an "aa update" backed up (backups/<file>_v<ver>_pre-update_<stamp>)
+-- whose version isn't skip_ver; nil if none
+function aa_rollback_find(skip_ver)
+    local names = windower.get_dir and windower.get_dir(windower.addon_path .. 'backups/')
+    if type(names) ~= 'table' then return nil end
+    local best = nil
+    for _, n in pairs(names) do
+        local v, st = tostring(n):match('^autoattack_v(.-)_pre%-update_(.-)%.lua$')
+        if v and v ~= skip_ver and (not best or st > best.stamp) then best = {ver = v, stamp = st} end
+    end
+    return best
+end
+-- copy that set back over the live files; true or false, why
+function aa_rollback_restore(set)
+    local dir, n_ok = windower.addon_path, 0
+    for _, n in ipairs(AA_UPDATE_FILES) do
+        local stem, ext = n:match('^(.-)(%.[^.]+)$')
+        local src = io.open(dir .. 'backups/' .. stem .. '_v' .. set.ver .. '_pre-update_' .. set.stamp .. ext, 'rb')
+        if src then
+            local data = src:read('*a'); src:close()
+            local dst = io.open(dir .. n, 'wb')
+            if not dst then return false, 'could not write ' .. n end
+            dst:write(data); dst:close()
+            n_ok = n_ok + 1
+        elseif n == 'autoattack.lua' then
+            return false, 'backup of autoattack.lua not found'
+        end
+    end
+    return n_ok > 0, (n_ok == 0) and 'no backup files found' or nil
+end
+function aa_safe_say(src, sender, text)
+    text = tostring(text):gsub('[%c";]', ' '):sub(1, 180)
+    if src == 'tell' and sender and sender ~= '' then
+        windower.send_command('input /tell ' .. sender .. ' ' .. text)
+    elseif src == 'party' then
+        windower.send_command('input /p ' .. text)
+    end
+    windower.add_to_chat(167, text)
+end
+-- called when AA_MAIN (or aa_party.lua) fails to load; true = rolling back
+function aa_start_failed(err)
+    if AA_ROLLING_BACK then return true end
+    local first = tostring(err):match('^[^\n]*') or tostring(err)
+    windower.add_to_chat(167, '[AA] AutoAttack failed to start: ' .. tostring(err))
+    local dir = windower.addon_path
+    local note = AA_RELOAD_NOTE
+    local f = io.open(dir .. 'data/reload_notify.txt', 'r')
+    if f then
+        local line = f:read('*l') or ''
+        f:close()
+        local a, b, c, d = line:match('^(%a+)\t([^\t]*)\t(%d+)\t?([^\t]*)')
+        if a then note = {src = a, sender = b, t = tonumber(c), from = d} end
+    end
+    local new_ver = tostring(_addon and _addon.version or '?')
+    if not (note and note.from and note.from ~= '' and note.from ~= new_ver
+            and note.t and os.time() - note.t <= 600) then
+        return false   -- not right after an aa update: nothing to roll back
+    end
+    local p = windower.ffxi.get_player()
+    local me = (p and p.name) or 'AutoAttack'
+    local set = aa_rollback_find(new_ver)
+    local ok, why = false, 'no backup from the update found'
+    if set then ok, why = aa_rollback_restore(set) end
+    if not ok then
+        aa_safe_say(note.src, note.sender, '[AA] ' .. me .. ': v' .. new_ver .. ' failed to start (' .. first ..
+            ') and could not roll back (' .. tostring(why) .. ') -- install by hand.')
+        return false
+    end
+    AA_ROLLING_BACK = true
+    -- the restored version answers "reloaded -- AutoAttack v<old>"
+    local nf = io.open(dir .. 'data/reload_notify.txt', 'w')
+    if nf then nf:write(note.src, '\t', note.sender or '', '\t', tostring(os.time()), '\t\n'); nf:close() end
+    aa_safe_say(note.src, note.sender, '[AA] ' .. me .. ': v' .. new_ver .. ' failed to start (' .. first ..
+        ') -- rolled back to v' .. set.ver .. ', reloading.')
+    local folder = dir:match('([^/\\]+)[/\\]*$') or 'autoattack'
+    coroutine.schedule(function() windower.send_command('lua r ' .. folder) end, 2)
+    return true
+end
+
+function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this file)
+
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.64'
+_addon.version  = '4.65'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -9055,6 +9150,27 @@ v4.64 - aa update fix (Mark, 2026-11-18 00:43: "update failed -- attempt to
           gone; nothing in do_update yields now.
         * PCs on v4.62 / v4.63 have the broken updater, so they need this
           version copied over by hand once; aa update works from v4.64 on.
+v4.65 - Safe start + rollback, aa update check / aa version, richer ping,
+        README "Installation & updates" (Mark, 2026-11-18: first release
+        delivered by aa update).
+        * SAFE START: the whole addon now runs inside AA_MAIN() under
+          xpcall. If it fails to start within 10 min of an aa update
+          (reload_notify.txt names the old version), the files that update
+          backed up (backups/*_v<old>_pre-update_<stamp>) are copied back,
+          the sender is told "v<new> failed to start (<error>) -- rolled back
+          to v<old>, reloading.", and it reloads on the old version. Same if
+          aa_party.lua fails to load after an update. Any other start
+          failure is reported as before.
+        * aa rollback [all]: back to the newest version an aa update backed
+          up (not the one running). Refused while fighting. Reply "rolled
+          back to v<old> -- reloading...".
+        * aa update check / aa version: reads GitHub's manifest and replies
+          "v4.65 (GitHub: v4.65) -- up to date" / '-- "aa update" to
+          install' -- installs nothing.
+        * aa ping: "<name> v<ver> | WAR99/SAM | PULL | 4.1 MB".
+        * README: "Installation & updates" section (first install, aa
+          update vs aa reload, config safety, GitHub cache, failed update,
+          rollback).
 ]]
 
 
@@ -9282,11 +9398,13 @@ function aa_load_party()
     local chunk, err = loadfile(windower.addon_path .. 'aa_party.lua')
     if not chunk then
         windower.add_to_chat(167, '[AA] aa_party.lua not loaded (party commands off): ' .. tostring(err))
+        if aa_start_failed then aa_start_failed('aa_party.lua: ' .. tostring(err)) end   -- v4.65
         return nil
     end
     local ok, mod = pcall(chunk)
     if not ok then
         windower.add_to_chat(167, '[AA] aa_party.lua error (party commands off): ' .. tostring(mod))
+        if aa_start_failed then aa_start_failed('aa_party.lua: ' .. tostring(mod)) end   -- v4.65
         return nil
     end
     return mod
@@ -9701,3 +9819,13 @@ windower.register_event('action', function(action)
     end)
     if not _ok2 then info_msg('Action handler error: ' .. tostring(_err2)) end
 end)
+
+end  -- AA_MAIN (v4.65)
+
+-- v4.65: start AutoAttack; on failure right after an aa update, roll back
+do
+    local ok, err = xpcall(AA_MAIN, function(e)
+        return (debug and debug.traceback) and debug.traceback(tostring(e), 2) or tostring(e)
+    end)
+    if not ok and not aa_start_failed(err) then error(err, 0) end
+end
