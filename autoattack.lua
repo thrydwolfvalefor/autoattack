@@ -50,7 +50,7 @@
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.63'
+_addon.version  = '4.64'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -9046,6 +9046,15 @@ v4.63 - Updates never wipe a player's settings (Mark, 2026-11-18: "how are
         * Rule from now on: settings are not renamed or removed in a way
           that breaks an older aa_config.lua; a renamed setting keeps
           accepting the old name for a while, and the changelog says so.
+v4.64 - aa update fix (Mark, 2026-11-18 00:43: "update failed -- attempt to
+        yield across metamethod/C-call boundary" on every PC).
+        * aa_party.lua: do_update() runs inside pcall, and paused 0.2s
+          (coroutine.sleep) between file downloads. Windower's Lua 5.1 can't
+          yield inside pcall, so the update stopped after the first file --
+          before anything was written (no files were changed). The pause is
+          gone; nothing in do_update yields now.
+        * PCs on v4.62 / v4.63 have the broken updater, so they need this
+          version copied over by hand once; aa update works from v4.64 on.
 ]]
 
 

@@ -6,7 +6,8 @@
     old ring put back, v4.57: aa disband drops Trusts first, then breaks up,
     v4.58: aa disband clears a leftover party of 1,
     v4.60: aa reload [all], v4.61: slim item lookups (aa_item / aa_item_named),
-    v4.62: aa update [all|force] -- newest release from GitHub, then reload)
+    v4.62: aa update [all|force] -- newest release from GitHub, then reload,
+    v4.64: aa update fix -- no yield inside pcall)
 
     Loaded by autoattack.lua. Lets your friends (party.friends in
     aa_config.lua) control this character's AutoAttack with /tell or party
@@ -1498,7 +1499,9 @@ local function do_update(ctx, force)
             return bad('autoattack.lua is not v' .. ver .. ' (GitHub may still be serving the old copy -- try again in a few minutes).')
         end
         got[#got + 1] = {name = f.name, data = body}
-        coroutine.sleep(0.2)
+        -- v4.64: no coroutine.sleep here -- do_update runs inside pcall, and
+        -- Lua 5.1 can't yield inside pcall ('attempt to yield across
+        -- metamethod/C-call boundary'). Nothing in do_update may yield.
     end
     if engaged() or party_fighting() then return bad('a fight started -- nothing changed, send it again after the fight.') end
     -- back up the current files, then write the new ones
