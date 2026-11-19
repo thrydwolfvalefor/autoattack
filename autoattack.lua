@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.82'
+_addon.version  = '4.83'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -1452,7 +1452,7 @@ function hot_switch_pick(dead_id)
             local reach = 3.0 + (m.model_size or 2.0) + HOT_SWITCH_EXTRA
             if HOT_SWITCH_RANGE == 'pull' and (aa_pull_dist or 0) > reach then reach = aa_pull_dist end
             if d <= reach then
-                if hs_is_hot(m, ids, idx) then
+                if mob_in_our_fight(m, ids, idx) then   -- v4.83 (was hs_is_hot)
                     if d < hot_d then hot_m, hot_d = m, d end
                 elseif d < new_d then
                     new_m, new_d = m, d
@@ -4254,6 +4254,35 @@ function aa_on_defeated(how, killer_id)
     windower.add_to_chat(167, '[AutoAttack] You were defeated' .. who .. '. Auto-attack stopped.')
 end
 
+-- v4.83: a mob we Provoked in the last PROVOKED_HOT_SECS is in our fight even
+-- before the game shows it claimed / targeting us. 11-19 00:00:54: PullNext
+-- Provoked a bat at 8.3y, the current bat died 0.7s later, and HOT-SWITCH
+-- took an unaggroed bat at 4.6y ("fresh") -- then sat in PULL-WAIT on it
+-- (Provoke on recast) while the Provoked bat hit us from behind.
+PROVOKED_HOT_SECS  = 20
+FRESH_RETARGET_GAP = 2.0   -- s between two checks
+fresh_rt_at = 0
+function mob_in_our_fight(m, ids, idx)
+    if hs_is_hot(m, ids, idx) then return true end
+    return provoke_last and provoke_last.id == m.id and (os.clock() - provoke_last.time) < PROVOKED_HOT_SECS or false
+end
+-- v4.83: engaged on a mob that isn't fighting us while another one is --
+-- switch to the one that is (it is hitting us; the fresh one can wait).
+function fresh_target_retarget(t, now)
+    if now - fresh_rt_at < FRESH_RETARGET_GAP then return false end
+    fresh_rt_at = now
+    local p = windower.ffxi.get_player()
+    if not p or p.status ~= 1 or not t or not t.id then return false end
+    local ids, idx = hs_party_sets(p)
+    if mob_in_our_fight(t, ids, idx) then return false end
+    local m, d, hot = hot_switch_pick(t.id)
+    if not m or not hot then return false end
+    if not engaged_switch(m) then return false end
+    info_msg('RETARGET >>>> ' .. tostring(m.name) .. ' (' .. m.id .. ', ' .. string.format('%.1f', d or 0) ..
+             'y) is fighting us -- leaving ' .. tostring(t.name) .. ' (' .. t.id .. '), which is not.')
+    return true
+end
+
 function engaged_pull_logic(pull_command, pull_dist, pull_wait, method)
     if autoattack_type ~= 'pull' then return end
     local t = windower.ffxi.get_mob_by_target('t')
@@ -4270,6 +4299,7 @@ function engaged_pull_logic(pull_command, pull_dist, pull_wait, method)
         ps.trouble_prov = 0; ps.trouble_ra = 0 -- v4.75
     end
     local dist = t.distance and t.distance:sqrt() or 999
+    if fresh_target_retarget(t, now) then return end   -- v4.83
     -- v4.40: HOT-SWITCH-PROVOKE: Provoke the hot-switched mob right away
     if hs_provoke.id ~= 0 then
         if os.clock() > hs_provoke.until_t then
@@ -10226,6 +10256,18 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.83 - No more sitting on a fresh bat while another one is fighting us
+        (Mark, 2026-11-19: "Shadow just got stuck on a bat that was like 7
+        yalms away, not aggroed to us, while another bat was already
+        fighting us from behind").
+        * 00:00:53 PullNext Provoked a bat at 8.3y; the current bat died
+          0.7s later and HOT-SWITCH chose an unaggroed bat at 4.6y ("fresh")
+          -- the Provoked one wasn't shown as claimed yet. Shadow then sat in
+          PULL-WAIT on the fresh bat (Provoke on recast).
+        * A mob we Provoked in the last 20s (PROVOKED_HOT_SECS) now counts as
+          in our fight, so HOT-SWITCH takes it first.
+        * Engaged on a mob that isn't fighting us while another one is: switch
+          to the one that is (RETARGET >>>> line), checked every 2s.
 v4.82 - aa update while fighting (Mark, 2026-11-18). It used to answer
         "fighting -- send aa update again after the fight". Now it updates
         right away, and the reloaded AA carries on: before the reload it
