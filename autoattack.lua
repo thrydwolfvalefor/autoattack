@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.83'
+_addon.version  = '4.84'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -5307,10 +5307,17 @@ function gsc_openers(mem)
     return gsc_sort(out)
 end
 -- once_per_mob WS this player still owes on this mob, or nil
+-- v4.84: a mark is a time, forgotten after GSC_PRE_FORGET s. It used to be
+-- kept until 400 marks: the bats respawn with the same 8 IDs, so after the
+-- first Full Break on each ID it never fired again -- 9 Full Breaks in 9
+-- hours on 11-19 (Mark asked for one on every mob).
+GSC_PRE_FORGET = 120
 function gsc_pre_ws(m, mob_id)
     local pre = gsc_cfg('once_per_mob')
     local pw = type(pre) == 'table' and m.weapon and pre[m.weapon] or nil
-    if not pw or GSC.pre_done[mob_id .. '|' .. m.id] then return nil end
+    local done = GSC.pre_done[mob_id .. '|' .. m.id]
+    if done and (type(done) ~= 'number' or os.clock() - done < GSC_PRE_FORGET) then return nil end
+    if not pw then return nil end
     if m.me then return gsc_learned()[pw] and pw or nil end
     for _, ws in ipairs(m.pool) do if ws == pw then return pw end end
     return nil
@@ -5318,7 +5325,7 @@ end
 function gsc_pre_mark(mob_id, actor_id)
     GSC.pre_n = GSC.pre_n + 1
     if GSC.pre_n > 400 then GSC.pre_done, GSC.pre_n = {}, 1 end
-    GSC.pre_done[mob_id .. '|' .. actor_id] = true
+    GSC.pre_done[mob_id .. '|' .. actor_id] = os.clock()   -- v4.84: a time, not true
 end
 function gsc_fire(t, ws, why, quiet)
     local cur = windower.ffxi.get_mob_by_target('t')
@@ -5378,6 +5385,11 @@ function gsc_tick()
                     -- v4.72: continuing your own WS: always one handoff later (teammates
                     -- see your TP late and may already be going)
                     if c.actor == me.id then go_at = math.max(go_at, open_t + gsc_num('handoff_wait')) end
+                    -- v4.84: a filler (Scrach) continues one handoff late too: it sees
+                    -- the melees' TP late, and Savage Blade + Shoha / Ukko's Fury on the
+                    -- same resonance within 3s was the top chain-breaker (64 of 133 on
+                    -- 11-19). A melee WS starting in that time holds it (GSC.began).
+                    if me.filler then go_at = math.max(go_at, open_t + gsc_num('handoff_wait')) end
                     if ready and now >= go_at then
                         return gsc_fire(t, cd.ws, string.format('%s >> %s = %s (step %d)',
                             tostring(c.label), cd.ws, cd.res, (c.step or 1) + 1), true)
@@ -10256,6 +10268,15 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.84 - Review of 9h overnight on v4.82 (Mark, 2026-11-19).
+        * Full Break once per mob never really ran: the "done" marks were
+          kept by mob ID until 400 of them, and the bats respawn with the
+          same 8 IDs -- 9 Full Breaks in 9 hours (50 in 3h on v4.76, same
+          bug). Marks now expire after 120s (GSC_PRE_FORGET).
+        * A filler (Scrach) continuing a chain waits one handoff_wait after
+          the window opens, like a self-continuation. Two closers on one
+          resonance within 3s broke 133 of 980 pair-made Lights; 64 of those
+          had Savage Blade in them.
 v4.83 - No more sitting on a fresh bat while another one is fighting us
         (Mark, 2026-11-19: "Shadow just got stuck on a bat that was like 7
         yalms away, not aggroed to us, while another bat was already
