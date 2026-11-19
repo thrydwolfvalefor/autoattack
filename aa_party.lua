@@ -1747,7 +1747,7 @@ local function do_update(ctx, force)
         -- Lua 5.1 can't yield inside pcall ('attempt to yield across
         -- metamethod/C-call boundary'). Nothing in do_update may yield.
     end
-    if engaged() or party_fighting() then return bad('a fight started -- nothing changed, send it again after the fight.') end
+    -- v4.85: no "a fight started" refusal -- the reload resumes the fight (v4.82)
     -- back up the current files, then write the new ones
     local dir = windower.addon_path
     local old = {}

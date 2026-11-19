@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.84'
+_addon.version  = '4.85'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -1452,7 +1452,7 @@ function hot_switch_pick(dead_id)
             local reach = 3.0 + (m.model_size or 2.0) + HOT_SWITCH_EXTRA
             if HOT_SWITCH_RANGE == 'pull' and (aa_pull_dist or 0) > reach then reach = aa_pull_dist end
             if d <= reach then
-                if mob_in_our_fight(m, ids, idx) then   -- v4.83 (was hs_is_hot)
+                if mob_is_ours(m, ids, idx) then   -- v4.83 (was hs_is_hot)
                     if d < hot_d then hot_m, hot_d = m, d end
                 elseif d < new_d then
                     new_m, new_d = m, d
@@ -4262,7 +4262,7 @@ end
 PROVOKED_HOT_SECS  = 20
 FRESH_RETARGET_GAP = 2.0   -- s between two checks
 fresh_rt_at = 0
-function mob_in_our_fight(m, ids, idx)
+function mob_is_ours(m, ids, idx)   -- v4.85: renamed (mob_in_our_fight(t) is v4.01's)
     if hs_is_hot(m, ids, idx) then return true end
     return provoke_last and provoke_last.id == m.id and (os.clock() - provoke_last.time) < PROVOKED_HOT_SECS or false
 end
@@ -4274,7 +4274,7 @@ function fresh_target_retarget(t, now)
     local p = windower.ffxi.get_player()
     if not p or p.status ~= 1 or not t or not t.id then return false end
     local ids, idx = hs_party_sets(p)
-    if mob_in_our_fight(t, ids, idx) then return false end
+    if mob_is_ours(t, ids, idx) then return false end
     local m, d, hot = hot_switch_pick(t.id)
     if not m or not hot then return false end
     if not engaged_switch(m) then return false end
@@ -10268,6 +10268,15 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.85 - Hotfix (Mark, 2026-11-19 11:27).
+        * "autoattack.lua:1434: attempt to index local 'ids' (a nil value)",
+          over and over: v4.83's new mob_in_our_fight(m, ids, idx) replaced
+          v4.01's mob_in_our_fight(t) of the same name, which the main loop's
+          closer-switch still calls with one argument. The new one is now
+          mob_is_ours; v4.01's is back.
+        * aa update mid-fight: v4.82 dropped the "fighting" check at the start
+          but a second one after the download still said "a fight started --
+          nothing changed" (10:58 twice). Removed; the reload resumes the fight.
 v4.84 - Review of 9h overnight on v4.82 (Mark, 2026-11-19).
         * Full Break once per mob never really ran: the "done" marks were
           kept by mob ID until 400 of them, and the bats respawn with the
