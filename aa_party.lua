@@ -1587,7 +1587,44 @@ local function addon_folder()
 end
 -- Save who asked (and the version before an update) for the reloaded AA,
 -- stop everything, then //lua r autoattack.
+-- v4.82: what was running, so the reloaded AA carries on (aa update mid-fight)
+local RESUME_FILE = windower.addon_path .. 'data/resume_state.txt'
+local function save_resume()
+    os.remove(RESUME_FILE)
+    if not (aa_running and aa_running()) then return end
+    local f = io.open(RESUME_FILE, 'w')
+    if not f then return end
+    local A = AA_ANCHOR
+    f:write(table.concat({
+        tostring(os.time()), tostring(aa_get_mode and aa_get_mode() or ''), tostring(zone_id()),
+        (P.follow_fight and P.follow) or '',
+        A and string.format('%.3f', A.x) or '', A and string.format('%.3f', A.y) or '',
+    }, '\t'), '\n')
+    f:close()
+end
+-- after the reload: same zone, within 2 minutes -> fight spot, aa fight
+-- following and the mode (pull / assist) come back
+RESUME_MAX_AGE = 120
+local function resume_after_reload()
+    local f = io.open(RESUME_FILE, 'r')
+    if not f then return end
+    local line = f:read('*l') or ''
+    f:close()
+    os.remove(RESUME_FILE)
+    local t, mode, z, lead, ax, ay = line:match('^(%d+)\t(%a*)\t(%d+)\t([^\t]*)\t([^\t]*)\t([^\t]*)')
+    t, z = tonumber(t), tonumber(z)
+    if not t or os.time() - t > RESUME_MAX_AGE or (mode ~= 'pull' and mode ~= 'assist') then return end
+    if z ~= zone_id() then say('RESUME: zoned since the reload -- not resuming.'); return end
+    if tonumber(ax) and tonumber(ay) then AA_ANCHOR = {x = tonumber(ax), y = tonumber(ay), zone = z} end
+    if lead ~= '' then P.follow, P.follow_fight = lead, true end
+    P.fight_at = os.clock()   -- the "aa <mode>" below keeps fight mode (leave_fight_mode)
+    say('RESUME: carrying on in ' .. mode:upper() .. ' mode after the reload' ..
+        (AA_ANCHOR and ', fight spot kept' or '') .. (lead ~= '' and (', fight-following ' .. lead) or '') .. '.')
+    send('aa ' .. mode)
+end
+
 local function reload_now(ctx, from_ver)
+    save_resume()   -- v4.82
     local f = io.open(RELOAD_FILE, 'w')
     if f then
         f:write(ctx.src, '\t', ctx.sender or '', '\t', tostring(os.time()), '\t', from_ver or '', '\n')
@@ -1793,9 +1830,7 @@ local function cmd_update(ctx, w)
         if ctx.src == 'tell' then reply(ctx, my_name() .. ': updating the whole party.') end
         return party_command('aa update' .. ((w[2] == 'force' or w[3] == 'force') and ' force' or ''))
     end
-    if engaged() or party_fighting() then
-        return reply(ctx, my_name() .. ': fighting -- send "aa update" again after the fight.')
-    end
+    -- v4.82: no "fighting" refusal -- the reloaded AA resumes the fight (save_resume)
     if P.busy then return reply(ctx, my_name() .. ' is busy: ' .. P.busy .. ' -- "aa cancel" first, then "aa update".') end
     if P.updating then return end
     P.updating = true
@@ -2165,6 +2200,7 @@ do
                     coroutine.sleep(1)
                 end
                 if my_name() == '' then return end
+                resume_after_reload()   -- v4.82
                 local ctx = {src = src, sender = (sender ~= '' and sender) or nil}
                 local now_v = tostring(_addon.version)
                 if from and from ~= '' and from ~= now_v then   -- v4.62: after aa update

@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.81'
+_addon.version  = '4.82'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -10226,6 +10226,15 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.82 - aa update while fighting (Mark, 2026-11-18). It used to answer
+        "fighting -- send aa update again after the fight". Now it updates
+        right away, and the reloaded AA carries on: before the reload it
+        saves the mode (PULL / ASSIST), the leader's fight spot and aa fight
+        following to data/resume_state.txt; after it (same zone, within 2
+        minutes) they come back and "aa pull" / "aa assist" restarts
+        ("RESUME: carrying on in PULL mode..."). aa reload resumes the same
+        way. The downloads still take a second or two, so expect a short
+        pause mid-fight.
 v4.81 - Puller walks back again (Mark, 2026-11-18: "Shadowhammer is still
         moving up to a bat sometimes, and then NOT moving back... even after
         that fight ends").
