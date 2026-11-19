@@ -1863,6 +1863,10 @@ local party = {enabled = true,
 	party_range    = 1,      -- yalms: "on top of each other" for aa fight / aa stack
 	stack_precision = 0.1,   -- yalms: aa stack / aa fight stop this close to the exact X/Y
 	follow_range   = 1,      -- yalms: how close aa follow keeps you
+	stack_watch    = true,   -- v4.75: aa fight members re-stack on the leader when they drift, even mid-fight
+	restack_slack  = 1.0,    -- v4.75: yalms past party_range before a re-stack
+	restack_max    = 10,     -- v4.75: farthest a member re-stacks while fighting (farther: between fights)
+	restack_delay  = 2,      -- v4.75: s off the stack before re-stacking
 	stack_timeout  = 30,     -- s a member runs toward the leader before giving up
 	stack_wait     = 5,      -- s the leader waits for members to stack before the first pull
 	trust_wait     = 120,    -- s after dropping Trusts before the inviting leader calls them again

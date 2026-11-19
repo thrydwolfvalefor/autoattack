@@ -14,7 +14,9 @@
     v4.68: party lines go out at least 2s apart -- a reply right after your
     own line was dropped by the game,
     v4.69: pull / assist / ws / move / ds answer the sender,
-    v4.70: aa gsc [on|off|auto] -- group skillchain switch, answers the sender)
+    v4.70: aa gsc [on|off|auto] -- group skillchain switch, answers the sender,
+    v4.75: stacking watch -- aa fight members re-stack on the leader mid-fight
+    (within restack_max), the leader keeps its aa fight spot)
 
     Loaded by autoattack.lua. Lets your friends (party.friends in
     aa_config.lua) control this character's AutoAttack with /tell or party
@@ -59,6 +61,10 @@ local D = {
     party_range    = 1,      -- yalms: "on top of each other" (aa fight / aa stack)
     stack_precision = 0.3,   -- yalms: aa stack / aa fight stop this close to the exact X/Y
     follow_range   = 1,      -- yalms: how close aa follow keeps you
+    stack_watch    = true,   -- v4.75: aa fight members re-stack on the leader when they drift
+    restack_slack  = 1.0,    -- v4.75: yalms past party_range before a re-stack
+    restack_max    = 10,     -- v4.75: farthest a member re-stacks while fighting (farther: between fights)
+    restack_delay  = 2,      -- v4.75: s off the stack before re-stacking
     stack_timeout  = 30,     -- s a member runs toward the leader before giving up
     stack_wait     = 5,      -- s the leader waits for members to stack before the first pull
     trust_wait     = 120,    -- s after dropping trusts before the inviting leader calls them again
@@ -358,9 +364,10 @@ local function move_tick()
         return
     end
     local p = me()
-    -- engaged: the main loop does the moving. Dead / resting: don't move.
-    if not p or p.status == 1 or p.status == 2 or p.status == 3 or p.status == 33
-       or (mv and mv.active) then
+    -- engaged: the main loop does the moving (v4.75: except a re-stack on the
+    -- leader). Dead / resting: don't move.
+    if not p or (p.status == 1 and not (P.stack and P.stack.engaged_ok)) or p.status == 2
+       or p.status == 3 or p.status == 33 or (mv and mv.active) then
         run_stop()
         return
     end
@@ -372,7 +379,13 @@ local function move_tick()
         if P.stack then
             -- v4.47: on the spot -- done once it holds for a few frames
             P.stack.hold = (P.stack.hold or 0) + 1
-            if P.stack.hold >= 3 then P.stack.result = true; P.stack = nil end
+            if P.stack.hold >= 3 then
+                if P.stack.engaged_ok and face_mob_direct then   -- v4.75: back on the mob
+                    local tm = windower.ffxi.get_mob_by_target('t')
+                    if tm and tm.hpp and tm.hpp > 0 then face_mob_direct(tm) end
+                end
+                P.stack.result = true; P.stack = nil
+            end
         end
     else
         if P.stack then P.stack.hold = 0 end
@@ -391,8 +404,8 @@ local function move_tick()
 end
 
 -- run onto <name>'s exact X/Y (within stack_precision); true when there
-local function stack_on(name, timeout, g)
-    P.stack = {name = name, deadline = os.clock() + (timeout or opt('stack_timeout'))}
+local function stack_on(name, timeout, g, engaged_ok)
+    P.stack = {name = name, deadline = os.clock() + (timeout or opt('stack_timeout')), engaged_ok = engaged_ok}
     local s = P.stack
     while s.result == nil do
         coroutine.sleep(0.2)
@@ -402,6 +415,38 @@ local function stack_on(name, timeout, g)
         end
     end
     return s.result
+end
+
+-- v4.75: STACKING WATCH (Mark, 2026-11-18: "we need to watch for this, and if
+-- this happens, need to re-stack. Stacking while fighting is fine... as long
+-- as they are already close (within 10 yalms)."). aa fight members only.
+local function stack_watch()
+    local now = os.clock()
+    if now < (P.sw_next or 0) then return end
+    P.sw_next = now + 0.5
+    if not P.follow_fight or not P.follow or P.stack or opt('stack_watch') == false or not aa_running() then
+        P.sw_since = nil
+        return
+    end
+    local p = me()
+    if not p or p.status ~= 1 then P.sw_since = nil; P.sw_far = nil; return end   -- not engaged: follow moves you
+    if mv and mv.active then return end
+    local d = dist_to_name(P.follow)
+    if not d then return end
+    if d <= opt('party_range') + opt('restack_slack') then P.sw_since = nil; P.sw_far = nil; return end
+    if d > opt('restack_max') then
+        if not P.sw_far then
+            P.sw_far = true
+            say(string.format('STACK: %.1fy from %s -- too far to re-stack mid-fight, stacking between fights.', d, P.follow))
+        end
+        return
+    end
+    P.sw_since = P.sw_since or now
+    if now - P.sw_since < opt('restack_delay') then return end
+    P.sw_since = nil
+    P.restacks = (P.restacks or 0) + 1
+    say(string.format('STACK: %.1fy from %s while fighting -- re-stacking (%d this session).', d, P.follow, P.restacks))
+    P.stack = {name = P.follow, deadline = now + opt('stack_timeout'), engaged_ok = true}
 end
 
 -- ---------------------------------------------------------------------------
@@ -522,7 +567,22 @@ end
 -- ---------------------------------------------------------------------------
 -- aa fight: the leader pulls, members assist the leader's pulls
 -- ---------------------------------------------------------------------------
+-- v4.75: ASSIST / PULL on their own mean "stay where you are" (Mark, 11-18:
+-- "If the player runs ASSIST, then they want to stay where they are. but if
+-- aa fight is ran, we want to stack and fight."). They end aa fight's
+-- following, re-stacking and the leader's fight spot. aa fight itself starts
+-- ASSIST / PULL, so commands within FIGHT_OWN_SECS of it don't count.
+FIGHT_OWN_SECS = 3
+local function leave_fight_mode(why)
+    if os.clock() - (P.fight_at or -99) < FIGHT_OWN_SECS then return end
+    local had = P.follow_fight or (AA_ANCHOR ~= nil)
+    if P.follow_fight then P.follow, P.follow_fight = nil, false; P.stack = nil; run_stop() end
+    if aa_clear_anchor then aa_clear_anchor(why) end
+    if had then say('FIGHT mode off (' .. why .. ') -- staying where you are, no stacking.') end
+end
+
 local function do_fight(ctx)
+    P.fight_at = os.clock()   -- v4.75: the ASSIST / PULL this starts keeps fight mode
     if i_lead() then
         P.follow, P.follow_fight = nil, false
         -- wait (stack_wait at most) for party members in this zone to stack on us
@@ -561,7 +621,9 @@ local function do_fight(ctx)
             if g ~= P.gen then return end
             say('FIGHT: ' .. trust_count() .. ' Trust(s) in the party.')
         end
+        if aa_set_anchor then aa_set_anchor() end   -- v4.75: the leader keeps this spot
         say('FIGHT: leader -- pulling.')
+        P.fight_at = os.clock()
         start_mode('pull')
         return
     end
@@ -581,14 +643,26 @@ local function do_fight(ctx)
                 return
             end
         end
+    else
+        -- v4.75: already fighting -- stack anyway when close (11-18: Myth stayed
+        -- off the stack for 30 min because aa fight came while he was engaged)
+        local d = dist_to_name(L)
+        if d and d > opt('party_range') + 0.5 and d <= opt('restack_max') then
+            say('FIGHT: fighting, but ' .. string.format('%.1f', d) .. 'y from ' .. L .. ' -- stacking now.')
+            stack_on(L, nil, nil, true)
+        elseif d and d > opt('restack_max') then
+            say('FIGHT: ' .. string.format('%.1f', d) .. 'y from ' .. L .. ' -- stacking after this fight.')
+        end
     end
     P.follow, P.follow_fight = L, true
     say('FIGHT: assisting ' .. L .. "'s pulls (following between fights).")
+    P.fight_at = os.clock()
     start_mode('assist')
 end
 
 -- aa stop (remote): finish the current fight, then stop
 local function do_stop(ctx)
+    if aa_clear_anchor then aa_clear_anchor('aa stop') end   -- v4.75
     if P.follow_fight then P.follow = nil; run_stop() end
     P.follow_fight = false
     if not aa_running() then reply(ctx, my_name() .. ': not fighting.'); return end
@@ -1441,6 +1515,7 @@ local function pass_through(ctx, c, w)
         end
     end
     if c == 'pull' or c == 'assist' then
+        leave_fight_mode('aa ' .. c .. ' from ' .. tostring(ctx.sender))   -- v4.75
         local MODE = c:upper()
         if aa_running() then
             local was = tostring(aa_get_mode and aa_get_mode() or '?'):upper()
@@ -1788,6 +1863,11 @@ local LOCAL = {invite = true, fight = true, stack = true, follow = true, unfollo
                warp = true, ['299'] = true, reload = true, rl = true, update = true, rollback = true, version = true}
 
 function aa_party_command(command, args)
+    -- v4.75: //aa assist / //aa pull typed (not started by aa fight): stay put
+    if command == 'assist' or command == 'pull' or command == 'start' then
+        leave_fight_mode('//aa ' .. command)
+        return false
+    end
     if command == 'stop' then
         -- typed //aa stop: stop right away (autoattack.lua does it); drop the fight-follow
         if P.follow_fight then P.follow, P.follow_fight = nil, false; run_stop() end
@@ -2005,6 +2085,7 @@ end)
 
 windower.register_event('prerender', function()
     watch_party()
+    stack_watch()   -- v4.75
     if P.stack or P.follow or P.running then move_tick() end
 end)
 

@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.74'
+_addon.version  = '4.75'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -3626,6 +3626,13 @@ STEP_IN_MOB_HITS        = 4
 STEP_IN_AFTER_PROVOKE   = 3.0
 STEP_IN_PROVOKE_MAXWAIT = 8.0
 STEP_IN_MSG_WINDOW      = 3.0    -- s a trouble message stays fresh
+-- v4.75: stepping in is an EMERGENCY (Mark, 11-18). On trouble: Provoke first,
+-- then a ranged attack; step in only when the mob keeps hitting you
+-- (STEP_IN_MOB_HITS rounds, none of yours landing) after those, or nothing
+-- fixed it in STEP_IN_EMERGENCY_WAIT s. "Out of range" alone (a mob still
+-- walking in) never steps in. false = v4.74 behaviour.
+STEP_IN_EMERGENCY      = true
+STEP_IN_EMERGENCY_WAIT = 12.0
 melee_msg    = {id = 0, time = 0, kind = ''}   -- v4.38: last cant-see / unable-to-reach on our target
 provoke_last = {id = 0, time = 0}              -- v4.38: last CONFIRMED Provoke and on which mob
 -- v4.35: engaged, in melee range, but no melee ROUND (weapon skills don't
@@ -3991,6 +3998,79 @@ function step_home_go(why)
     pull_state.melee_face = os.clock()
 end
 
+-- =========================================================================
+-- v4.75: FIGHT ANCHOR (Mark, 2026-11-18: "When Fight command is started, log
+-- the start position of the leader, and keep the leader there even if he
+-- moves a little to engage a mob.") aa fight on the leader saves the spot;
+-- in PULL mode the leader runs back to it whenever it is more than
+-- ANCHOR_TOL yalms away -- between mobs always, while engaged only if the
+-- mob can still be hit from the spot (so it never walks off a mob). Party
+-- members stack on the leader, so they stay on the spot too.
+-- Cleared by //aa stop, aa stop and zoning. Globals on purpose.
+-- =========================================================================
+ANCHOR_TOL      = 1.0    -- yalms from the fight spot that count as "on it"
+ANCHOR_COOLDOWN = 3.0    -- s between two returns
+ANCHOR_RUN_TIME = 6.0    -- s: longest run back
+AA_ANCHOR       = nil    -- {x, y, zone}
+anchor_last     = 0
+function aa_set_anchor()
+    local me = windower.ffxi.get_mob_by_target('me')
+    local info = windower.ffxi.get_info()
+    if not me or not me.x then return false end
+    AA_ANCHOR = {x = me.x, y = me.y, zone = info and info.zone}
+    info_msg(string.format('ANCHOR: fight spot saved (%.2f, %.2f) -- the leader comes back here after any move.', me.x, me.y))
+    return true
+end
+function aa_clear_anchor(why)
+    if AA_ANCHOR then
+        AA_ANCHOR = nil
+        debug_msg('ANCHOR: cleared -- ' .. tostring(why) .. '.')
+    end
+end
+function anchor_check()
+    local A = AA_ANCHOR
+    if not A or not auto_attack or autoattack_type ~= 'pull' then return end
+    local info = windower.ffxi.get_info()
+    if info and A.zone and info.zone ~= A.zone then aa_clear_anchor('zoned'); return end
+    if step_home.active or (mv and mv.active) then return end
+    local now = os.clock()
+    if now - anchor_last < ANCHOR_COOLDOWN then return end
+    local me = windower.ffxi.get_mob_by_target('me')
+    local p = windower.ffxi.get_player()
+    if not me or not me.x or not p or (p.vitals and p.vitals.hp == 0) then return end
+    local d = math.sqrt((A.x - me.x) ^ 2 + (A.y - me.y) ^ 2)
+    if d <= ANCHOR_TOL then return end
+    local t = windower.ffxi.get_mob_by_target('t')
+    if p.status == 1 and t and t.hpp and t.hpp > 0 and t.x then
+        -- engaged: only if the mob can still be hit from the fight spot
+        local reach = 3.0 + (t.model_size or 2.0)
+        if math.sqrt((A.x - t.x) ^ 2 + (A.y - t.y) ^ 2) > reach then return end
+    end
+    anchor_last = now
+    info_msg(string.format('ANCHOR: %.1fy from the fight spot -- moving back.', d))
+    local t0, lx, ly, chk = os.clock(), me.x, me.y, os.clock()
+    while os.clock() - t0 < ANCHOR_RUN_TIME do
+        me = windower.ffxi.get_mob_by_target('me')
+        if not auto_attack or not me or not me.x then break end
+        local dx, dy = A.x - me.x, A.y - me.y
+        if math.sqrt(dx * dx + dy * dy) <= 0.3 then break end
+        if os.clock() - chk >= 0.6 then
+            if math.sqrt((me.x - lx) ^ 2 + (me.y - ly) ^ 2) < 0.15 then
+                debug_msg('ANCHOR: blocked on the way back -- stopping here.')
+                break
+            end
+            lx, ly, chk = me.x, me.y, os.clock()
+        end
+        aa_loop_beat = os.clock()
+        windower.ffxi.run(dx, dy)
+        coroutine.sleep(0.05)
+    end
+    windower.ffxi.run(false)
+    t = windower.ffxi.get_mob_by_target('t')
+    if t and t.hpp and t.hpp > 0 then face_mob_direct(t) end
+    if type(pull_state) == 'table' then pull_state.melee_face = os.clock() end
+end
+
 -- v4.37: every loop tick. Go back once the step-in mob is engaged for real
 -- (a melee round landed on it), died, or we are on another target.
 function step_home_check()
@@ -4037,7 +4117,30 @@ function melee_trouble_step(t, dist, mr, ps, now, oor_recent)
     if (ps.trouble_at or 0) == 0 then
         ps.trouble_at = now
         info_msg('TROUBLE: ' .. (t.name or '?') .. ' at ' .. string.format('%.1f', dist) ..
-                 'y -- ' .. why .. (MELEE_PROVOKE_NO_HIT and '. Provoke first, then step in if still not hitting.' or '. Stepping in.'))
+                 'y -- ' .. why .. (STEP_IN_EMERGENCY and '. Provoke / ranged attack first; stepping in only as an emergency.'
+                 or (MELEE_PROVOKE_NO_HIT and '. Provoke first, then step in if still not hitting.' or '. Stepping in.')))
+    end
+    -- v4.75: emergency-only step in
+    if STEP_IN_EMERGENCY then
+        if dist <= PROVOKE_PULL_RANGE and provoke_pull_ready() and (now - (ps.trouble_prov or 0)) >= 5 then
+            ps.trouble_prov = now
+            info_msg('TROUBLE: ' .. (t.name or '?') .. ' -- Provoke (no stepping in).')
+            if try_provoke_pull(t) then return true end
+        end
+        if ranged_attack_ready() and (now - (ps.trouble_ra or 0)) >= 5 then
+            ps.trouble_ra = now
+            info_msg('TROUBLE: ' .. (t.name or '?') .. ' -- ranged attack (no stepping in).')
+            cmd('input /ra <t>')
+            return true
+        end
+        local tried = math.max(ps.trouble_prov or 0, ps.trouble_ra or 0)
+        local hit_by_it = n >= STEP_IN_MOB_HITS and (tried == 0 or (now - tried) >= STEP_IN_AFTER_PROVOKE)
+        if not hit_by_it and (now - ps.trouble_at) < STEP_IN_EMERGENCY_WAIT then return false end
+        if not ps.emerg_said or ps.emerg_said ~= ps.trouble_at then
+            ps.emerg_said = ps.trouble_at
+            info_msg('EMERGENCY STEP-IN: ' .. (t.name or '?') .. ' -- ' .. (hit_by_it and (n .. ' hits on you, none from you')
+                     or ('nothing fixed it in ' .. STEP_IN_EMERGENCY_WAIT .. 's')) .. '.')
+        end
     end
     -- Provoke first
     local _pl = provoke_wait_left()            -- nil = no /WAR
@@ -4102,6 +4205,7 @@ function engaged_pull_logic(pull_command, pull_dist, pull_wait, method)
         ps.reach = nil
         ps.reengages = 0; ps.reengage_at = 0  -- v4.35
         ps.trouble_at = 0                     -- v4.38
+        ps.trouble_prov = 0; ps.trouble_ra = 0 -- v4.75
     end
     local dist = t.distance and t.distance:sqrt() or 999
     -- v4.40: HOT-SWITCH-PROVOKE: Provoke the hot-switched mob right away
@@ -7089,6 +7193,7 @@ function main_logic_loop(my_gen)
         if ds_state.on and player.status ~= 1 then ds_leave('out of combat') end
         ds_restore_check()  -- v4.36: after-Dread-Spikes gear that didn't go back on
         step_home_check()   -- v4.37: back to the pre-STEP-IN spot once engaged
+        anchor_check()      -- v4.75: leader back on the aa fight spot
 
         --Configure pull type and range
         local pull_command = '/ra <t>'
@@ -10080,6 +10185,28 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.75 - Stacking watch, fight anchor, emergency-only step in (Mark,
+        2026-11-18: DPS down after the ASUS restart -- the characters weren't
+        stacked. Myth: 67 "out of range" in 30 min vs 8 in 53 min before;
+        his melee 25k -> 18k/min. aa fight skipped stacking because Myth was
+        engaged, and following only runs between fights.)
+        * aa_party: party members in aa fight check their distance to the
+          leader; engaged and more than party_range + restack_slack (2y) for
+          restack_delay (2s) but within restack_max (10y) -> re-stack now,
+          mid-fight, then face the mob. Farther: logged once, stacked
+          between fights. aa fight also stacks a member who is already
+          fighting (within restack_max).
+        * Leader: aa fight saves the spot (ANCHOR); in PULL mode the leader
+          runs back whenever more than ANCHOR_TOL (1y) away -- between mobs
+          always, engaged only if the mob can still be hit from the spot.
+          Cleared by stop / zoning.
+        * STEP_IN_EMERGENCY: on trouble the leader Provokes, then shoots
+          (if a ranged weapon is ready); it steps in only when the mob keeps
+          hitting it with none of its rounds landing, or nothing fixed it
+          in 12s. "Out of range" alone never steps in.
+        * Only with aa fight: aa assist / aa pull on their own (typed, by
+          tell or party chat) end fight mode -- no following, re-stacking or
+          fight spot; the player stays where they are.
 v4.74 - Fix: "autoattack.lua:768 attempt to call method 'with' (a nil
         value)" (Mark, 2026-11-18, ASUS on v4.73). res_with() called :with on
         a resource table that couldn't be searched -- the slim item proxy
@@ -10453,6 +10580,7 @@ function aa_addon_command(command, ...)
     elseif command == 'stop' then
         -- debug_msg('Stop command received')
         auto_attack = false
+        aa_clear_anchor('stopped')   -- v4.75
         fight_subcmd = nil
         initial_direction = nil
         if mv.active then windower.ffxi.run(false); mv.active = false end  -- v4.22
