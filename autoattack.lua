@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.80'
+_addon.version  = '4.81'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -3661,6 +3661,10 @@ STEP_IN_RETURN_MAX  = 1      -- returns per mob
 STEP_IN_RETURN_TOL  = 0.35   -- yalms: close enough to the old spot
 STEP_IN_RETURN_TIME = 4.0    -- s: longest run back
 STEP_IN_RETURN_WAIT = 60.0   -- s: no hit landed in this long -> forget the spot
+-- v4.81: the once-per-mob limit was kept by mob ID forever, but bats respawn
+-- with the same IDs (17555777-84 at King Ranperre's Tomb): after one return
+-- per ID, every later step-in saved no spot and never stepped back.
+STEP_IN_RETURN_FORGET = 30.0 -- s after a return before that mob ID gets another one
 step_home = {active = false, id = 0, x = 0, y = 0, at = 0, mob = '', returns = {}}
 -- v4.37: engaged, in melee range, and no melee round on it yet (or none in
 -- MELEE_HIT_WAIT s): keep Provoking every time Provoke is ready (PULL mode,
@@ -3956,7 +3960,8 @@ end
 function step_home_mark(t)
     if not STEP_IN_RETURN or not t or not t.id then return false end
     if step_home.active and step_home.id == t.id then return false end
-    if (step_home.returns[t.id] or 0) >= STEP_IN_RETURN_MAX then return false end
+    local _r = step_home.returns[t.id]   -- v4.81: {n, at}
+    if type(_r) == 'table' and os.clock() - _r.at < STEP_IN_RETURN_FORGET and _r.n >= STEP_IN_RETURN_MAX then return false end
     local me = windower.ffxi.get_mob_by_target('me')
     if not me or not me.x then return false end
     step_home.active = true; step_home.id = t.id; step_home.mob = t.name or '?'
@@ -3970,7 +3975,10 @@ end
 function step_home_go(why)
     local hx, hy, id = step_home.x, step_home.y, step_home.id
     step_home.active = false
-    step_home.returns[id] = (step_home.returns[id] or 0) + 1
+    local _r = step_home.returns[id]   -- v4.81
+    if type(_r) ~= 'table' or os.clock() - _r.at >= STEP_IN_RETURN_FORGET then _r = {n = 0} end
+    _r.n, _r.at = _r.n + 1, os.clock()
+    step_home.returns[id] = _r
     local me = windower.ffxi.get_mob_by_target('me')
     if not me or not me.x then return end
     local d0 = math.sqrt((hx - me.x) ^ 2 + (hy - me.y) ^ 2)
@@ -10218,6 +10226,19 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.81 - Puller walks back again (Mark, 2026-11-18: "Shadowhammer is still
+        moving up to a bat sometimes, and then NOT moving back... even after
+        that fight ends").
+        * STEP-BACK allowed one return per mob ID, kept forever. The bats
+          respawn with the same 8 IDs, so after the first return on each ID
+          every later step-in saved no spot ("EMERGENCY STEP-IN" with no
+          "STEP-HOME: spot saved") and never came back. The limit now
+          forgets an ID 30s after its return (STEP_IN_RETURN_FORGET).
+        * PULL mode always has a fight spot: where //aa pull started (aa
+          fight still sets it first). After the 23:44 reload Shadow ran plain
+          PULL with no spot, so nothing brought him back once a step-in
+          stuck. Typed //aa pull still means "stay where you are" -- that is
+          now the spot.
 v4.80 - No "a player joined" on zoning (Mark, 2026-11-18). The join watch
         counted players: while you zone the party list reloads (Trusts look
         like players for a moment, members drop out and come back), so every
@@ -10688,6 +10709,10 @@ function aa_addon_command(command, ...)
         local _p = windower.ffxi.get_player()
         local _job = _p and (_p.main_job .. '/' .. (_p.sub_job or '?')) or '?'
         info_msg('PULL command received — starting PULL mode. Job: ' .. _job .. (subcmd and (', subcmd: ' .. subcmd) or ''))
+        -- v4.81: the puller always has a spot to come back to -- where //aa pull
+        -- was typed (aa fight sets its own first). Without it, a plain
+        -- //aa pull (or one after a reload) never walked back after a step-in.
+        if not AA_ANCHOR then aa_set_anchor() end
         toggle_auto_attack()
     elseif command == 'stop' then
         -- debug_msg('Stop command received')
