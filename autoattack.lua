@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.75'
+_addon.version  = '4.76'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -722,6 +722,15 @@ local skillchain_time = nil
 local low_hp_pull_done = false  -- tracks whether we've already pulled the next mob during low-HP phase
 local low_hp_skip_logged = false  -- suppresses repeat low-HP skip debug_msg spam; reset whenever low_hp_pull_done resets
 local last_pull_next_time = 0   -- timestamp of last PullNext_OnLowHP pull; suppresses cascade pulls on freshly-damaged mobs
+-- v4.76: PullNext log -- one line per current mob and reason (the scan line
+-- used to print every tick and hid every skip reason)
+LHP_SAID = {id = 0}
+function lhp_note(id, key, msg)
+    if LHP_SAID.id ~= id then LHP_SAID = {id = id} end
+    if LHP_SAID[key] == msg then return end
+    LHP_SAID[key] = msg
+    if aa_dbg then aa_dbg(msg) end   -- debug_msg is declared further down
+end
 local PULL_NEXT_COOLDOWN = 5.0 -- seconds after a PullNext pull before another is allowed (prevents cascade pulls)
 local skip_combat_this_tick = false  -- NOTE: shadowed by a local re-declaration inside status==1 block; per-tick flag lives there
 local ws_sc_locked = false  -- true after a WS with LockOut=1 fires; blocks all non-WS actions until a WS with LockOut=0 fires
@@ -4520,6 +4529,40 @@ function provoke_fire_confirmed(label)
     return false
 end
 
+-- v4.76: Provoke a mob by ID without touching <t> (outgoing 0x01A, category
+-- 0x09 job ability -- what the client sends for /ja). PullNext used to move
+-- the cursor to the next mob, but while engaged <t> never followed ("target
+-- lock failed", 11-18), then /targetoff + /attack on cost ~5s with no Provoke.
+-- Confirmed the same way as provoke_fire_confirmed (our Provoke action seen).
+function provoke_by_id(m, label)
+    local pd = res_with('job_abilities', 'name', 'Provoke')
+    if not pd or not pd.id or not m or not m.id or not m.index or m.index == 0 then return false end
+    local packets = require('packets')
+    provoke_pending.ja_id, provoke_pending.confirmed, provoke_pending.active = pd.id, false, true
+    ability_last_used['Provoke'] = os.time()
+    packets.inject(packets.new('outgoing', 0x01A, {
+        ['Target']       = m.id,
+        ['Target Index'] = m.index,
+        ['Category']     = 0x09,   -- job ability
+        ['Param']        = pd.id,
+    }))
+    local t0 = os.clock()
+    while not provoke_pending.confirmed and (os.clock() - t0) < PROVOKE_CONFIRM_WAIT do
+        coroutine.sleep(0.1)
+    end
+    provoke_pending.active = false
+    if provoke_pending.confirmed then
+        provoke_last.id = m.id; provoke_last.time = os.clock()
+        info_msg('PROVOKE-OK (' .. label .. '): ' .. tostring(m.name) .. ' (' .. m.id .. ') after ' ..
+                 string.format('%.1f', os.clock() - t0) .. 's -- still on our target.')
+        return true
+    end
+    ability_last_used['Provoke'] = os.time() - (30 - PROVOKE_FAIL_RETRY)
+    info_msg('PROVOKE-FAIL (' .. label .. '): no Provoke seen on ' .. tostring(m.name) .. ' in ' ..
+             string.format('%.1f', PROVOKE_CONFIRM_WAIT) .. 's -- it gets the after-kill Provoke.')
+    return false
+end
+
 function try_provoke_pull(target)
     if not target or not target.hpp or target.hpp <= 0 then return false end
     if not target.distance then return false end
@@ -5188,11 +5231,17 @@ function gsc_pre_mark(mob_id, actor_id)
     if GSC.pre_n > 400 then GSC.pre_done, GSC.pre_n = {}, 1 end
     GSC.pre_done[mob_id .. '|' .. actor_id] = true
 end
-function gsc_fire(t, ws, why)
+function gsc_fire(t, ws, why, quiet)
     local cur = windower.ffxi.get_mob_by_target('t')
     if not cur or cur.id ~= t.id or not cur.hpp or cur.hpp <= 0 then return 'wait' end
     face_mob_direct(cur)   -- v4.70: turn first ("You cannot see" right after a switch)
-    info_msg('GSC: ' .. why)
+    -- v4.76: a chain step's "sending" line goes to the log file only at debug 2;
+    -- the "GSC: step N <SC> -- <WS> (<who>)" line when it lands is the one chat line
+    if quiet and (debug_level or 0) >= 2 then
+        aa_log_file(aa_wall_clock(os.clock()) .. ' L2 GSC: ' .. why)
+    else
+        info_msg('GSC: ' .. why)
+    end
     cmd('input /ws "' .. ws .. '" <t>')
     last_ws_time = os.clock()
     GSC.fired_at = last_ws_time
@@ -5242,7 +5291,7 @@ function gsc_tick()
                     if c.actor == me.id then go_at = math.max(go_at, open_t + gsc_num('handoff_wait')) end
                     if ready and now >= go_at then
                         return gsc_fire(t, cd.ws, string.format('%s >> %s = %s (step %d)',
-                            tostring(c.label), cd.ws, cd.res, (c.step or 1) + 1))
+                            tostring(c.label), cd.ws, cd.res, (c.step or 1) + 1), true)
                     end
                     if now >= go_at - 1.5 then return 'hold' end
                     return 'wait'
@@ -5371,7 +5420,10 @@ function gsc_on_action(act)
         local ends = term and (sc == 'Light' or sc == 'Darkness')
         GSC.chain = {target = t1.id, t = now, props = ends and {} or {sc}, step = step,
                      label = ends and (sc .. ' (end)') or sc, actor = act.actor_id}
-        debug_msg('GSC: ' .. name .. ' made ' .. sc .. ' (step ' .. step .. (ends and ', chain ends' or '') .. ').')
+        -- v4.76: one line per step, with who closed it (Mark: one line to spot the SC damage)
+        local _am = windower.ffxi.get_mob_by_id(act.actor_id)
+        debug_msg(string.format('GSC: step %d %s -- %s (%s)%s', step, sc, name,
+            tostring(_am and _am.name or act.actor_id), ends and ', chain ends' or ''))
     else
         GSC.chain = {target = t1.id, t = now, props = props, step = 1, label = name, actor = act.actor_id}
     end
@@ -8059,10 +8111,7 @@ function main_logic_loop(my_gen)
 					else
 					low_hp_skip_logged = false  -- v3.22: cooldown expired, allow next scan/pull to log
 					if cur and cur.hpp and cur.hpp > 0 and cur.hpp <= low_hp_prcnt and not low_hp_pull_done then
-						if not low_hp_skip_logged then
-						debug_msg('Low HP: ' .. (cur.name or '?') .. ' at ' .. cur.hpp .. '% - scanning for next mob.')
-							low_hp_skip_logged = true
-						end
+						lhp_note(cur.id, 'scan', 'Low HP: ' .. (cur.name or '?') .. ' at or under ' .. low_hp_prcnt .. '% - looking for the next mob.')  -- v4.76: once per mob
 						local next_all = windower.ffxi.get_mob_array()
 						local next_mob = nil
 						local next_d   = pull_dist + 1
@@ -8117,6 +8166,9 @@ function main_logic_loop(my_gen)
 							next_mob = next_eng or next_new
 							next_d   = next_eng and next_eng_d or next_new_d
 						end
+						if not next_mob then   -- v4.76
+							lhp_note(cur.id, 'none', 'Low HP pull: no free mob within ' .. string.format('%.1f', pull_dist) .. 'y to pull next.')
+						end
 						if next_mob then
 						-- v2.71: SC lockout no longer blocks PullNext_OnLowHP.
 						-- Previously ws_sc_locked gated the pull until the chain closed, but
@@ -8133,6 +8185,11 @@ function main_logic_loop(my_gen)
 							-- mobs from the count. Nearby players fighting their own mobs were triggering
 							-- the cap and silently blocking all PullNext pulls.
 							local PLAYER_MELEE_RADIUS = 10.0
+							-- v4.76: only mobs in OUR fight count (claimed by the party, targeting
+							-- or hitting one of us). Idle unclaimed mobs nearby used to count: on
+							-- 11-18 the next bat was within 10y at 146 of 157 kills, so PullNext
+							-- never fired.
+							local _hs_ids, _hs_idx = hs_party_sets(windower.ffxi.get_player())
 							local mobs_in_melee = 0
 							if next_all then
 								for _, mob in pairs(next_all) do
@@ -8143,7 +8200,8 @@ function main_logic_loop(my_gen)
 										and mob.id ~= cur.id
 										and is_mob_whitelisted(mob.name)
              and not is_mob_name_blacklisted(mob.name, mob.id)
-										and (mob.claim_id == 0 or party_ids[mob.claim_id]) then
+										and (mob.claim_id == 0 or party_ids[mob.claim_id])
+										and hs_is_hot(mob, _hs_ids, _hs_idx) then  -- v4.76
 										local mob_d = mob.distance:sqrt()
 										if mob_d <= PLAYER_MELEE_RADIUS then
 											mobs_in_melee = mobs_in_melee + 1
@@ -8157,115 +8215,34 @@ function main_logic_loop(my_gen)
 							--      PullNextMax=2: only pull when current is the sole mob (original behavior).
 							local pull_next_cap = math.max(0, pull_next_max - 1)
 							if mobs_in_melee >= pull_next_cap then
-								if not low_hp_skip_logged then
-									debug_msg('Low HP pull skipped: ' .. mobs_in_melee .. ' extra mob(s) in melee range (cap=' .. pull_next_cap .. ' from PullNextMax=' .. pull_next_max .. ').')
-									low_hp_skip_logged = true
-								end
+								lhp_note(cur.id, 'cap', 'Low HP pull skipped: ' .. mobs_in_melee .. ' other mob(s) already fighting us (cap ' .. pull_next_cap .. ' from PullNextMax=' .. pull_next_max .. ').')  -- v4.76
 								-- Don't set low_hp_pull_done - re-evaluate next tick
 							else
 								local next_melee_range = 3.0 + (next_mob.model_size or 2.0)
-								if next_d <= next_melee_range then
+								-- v4.76: skip only a mob that is already fighting us; an idle mob in
+								-- melee range gets pulled too (Locus Dire Bats don't aggro on their own)
+								if next_d <= next_melee_range and hs_is_hot(next_mob, _hs_ids, _hs_idx) then
 									-- Already in melee range - will aggro naturally, no pull needed
-									if not low_hp_skip_logged then
-									debug_msg('Low HP pull skipped: ' .. (next_mob.name or '?') .. ' in melee range (' .. string.format('%.1f', next_d) .. 'y). Will aggro naturally.')
-										low_hp_skip_logged = true
-									end
+									lhp_note(cur.id, 'melee', 'Low HP pull skipped: ' .. (next_mob.name or '?') .. ' (' .. string.format('%.1f', next_d) .. 'y) is already fighting us.')  -- v4.76
 									low_hp_pull_done = true
 								elseif full_party_hold() then
 									-- v4.54: party not full -- no second mob (checked again next tick)
 								else
-								info_msg('Next mob: ' .. (next_mob.name or '?') .. ' (' .. string.format('%.1f', next_d) .. 'y) - ST pull, returning to ' .. (cur.name or '?'))
-								-- Step 1: SetTarget next mob, face it, fire pull
+								-- v4.76: Provoke the next mob by ID and stay on the current one (no
+								-- cursor switch / switch back -- that never worked while engaged)
 								if not next_mob.id or next_mob.id <= 0 then
 									debug_msg('Low HP pull: next_mob has invalid ID, skipping.')
 								else
-								set_target(next_mob.id)
-								-- settarget is an addon command that goes through Windower's queue;
-								-- 0.7s was not enough for the target to register before the id check.
-								-- Wait longer, then retry up to 3 times before giving up.
-								coroutine.sleep(0.8)
-								-- v2.42 Fix 1: Only face if settarget has already resolved to next_mob.
-								-- Firing //facing f before the async settarget resolves causes 'Invalid argument'
-								-- because the game has no valid locked target yet (split-target window).
-								local t_face_pre = windower.ffxi.get_mob_by_target('t')
-								if t_face_pre and t_face_pre.id == next_mob.id and t_face_pre.hpp and t_face_pre.hpp > 0 then
-									face('f')
-								end
-								coroutine.sleep(0.4)
-								local t_pull = windower.ffxi.get_mob_by_target('t')
-								-- Retry if target hasn't resolved yet
-								local retries = 0
-								while (not t_pull or t_pull.id ~= next_mob.id) and retries < 3 do
-									coroutine.sleep(0.3)
-									t_pull = windower.ffxi.get_mob_by_target('t')
-									retries = retries + 1
-								end
-								if t_pull and t_pull.id == next_mob.id and t_pull.hpp and t_pull.hpp > 0 then
-									-- v3.26: Stamp this pull attempt AFTER //facing f has fired.
-									-- If "Unable to see" comes back within PULL_LOS_WINDOW it's geometry,
-									-- not a facing issue — the chunk handler will blacklist 30s.
-									last_pull_next_mob_id   = t_pull.id
-									last_pull_next_mob_time = os.clock()
-									-- Prefer Provoke over /ra when WAR/subWAR and mob is in Provoke range
-									if not try_provoke_pull(t_pull) then
-										cmd('input ' .. pull_command)
-										-- Wait for pull animation to fully resolve before switching target back
-										if pull_command:find('/ra') then
-											coroutine.sleep(1.5)  -- ranged attack needs longest wait
-										elseif pull_command:find('/ma') then
-											coroutine.sleep(1.0)  -- magic cast
-										else
-											coroutine.sleep(0.8)  -- provoke
-										end
-									else
-										-- v2.96: Provoke has no animation wait — add one so we don't
-										-- rush into the switch-back settarget while the JA is still resolving.
-										coroutine.sleep(1.0)
+								if next_d <= PROVOKE_PULL_RANGE and provoke_pull_ready() then
+									info_msg('Next mob: ' .. (next_mob.name or '?') .. ' (' .. string.format('%.1f', next_d) ..
+										'y) -- Provoke, staying on ' .. (cur.name or '?') .. ' (' .. tostring(cur.hpp) .. '%).')
+									if provoke_by_id(next_mob, 'pull next') then
+										last_pull_next_mob_id   = next_mob.id
+										last_pull_next_mob_time = os.clock()
 									end
 								else
-									debug_msg('Low HP pull: target lock failed or mob dead, skipping pull.')
-								end
-								-- Step 2: Switch back to current mob
-								-- Re-fetch cur to confirm it's still alive after the pull sleep delays
-								local cur_recheck = windower.ffxi.get_mob_by_id(cur.id)
-								if cur_recheck and cur_recheck.hpp and cur_recheck.hpp > 0 then
-									debug_msg('Switching back to: ' .. (cur.name or '?') .. ' ID ' .. cur.id)
-									if cur.id and cur.id > 0 then
-										-- v2.96: Clear any split-target state before switch-back.
-										-- Going directly from next_mob target into settarget cur can confuse
-										-- the game if the cursor hasn't fully released the pull target yet.
-										cmd('input /targetoff')
-										coroutine.sleep(0.2)
-										set_target(cur.id)
-										-- Same async issue as forward settarget: retry until cur resolves
-										coroutine.sleep(0.8)
-										local t_back = windower.ffxi.get_mob_by_target('t')
-										local back_retries = 0
-										while (not t_back or t_back.id ~= cur.id) and back_retries < 4 do
-											coroutine.sleep(0.3)
-											t_back = windower.ffxi.get_mob_by_target('t')
-											back_retries = back_retries + 1
-										end
-										if t_back and t_back.id == cur.id then
-											-- v2.42 Fix 2: sleep before facing so game internal state has settled
-											-- after the async settarget resolves. Without this pause the game is
-											-- still in a split-target state (cursor=2nd mob, party=1st mob) and
-											-- rejects //facing f with 'Invalid argument'.
-											coroutine.sleep(0.3)
-											face('f')
-											coroutine.sleep(0.5)
-											cmd('input /attack on')
-											coroutine.sleep(1.0)  -- let /attack on register before combat chain fires
-											debug_msg('Back on: ' .. (cur.name or '?') .. ' - resuming combat.')
-										else
-											debug_msg('Low HP pull: could not re-lock on original mob after retries.')
-										end
-									end
-								else
-									debug_msg('Low HP pull: original mob died during pull, engaging new target.')
-									face('f')
-									coroutine.sleep(0.2)
-									cmd('input /attack on')
+									lhp_note(cur.id, 'noprov', 'Low HP pull: Provoke not ready or ' .. (next_mob.name or '?') .. ' out of range (' ..
+										string.format('%.1f', next_d) .. 'y) -- it gets the after-kill Provoke.')
 								end
 									-- v3.22: do NOT set low_hp_pull_done = true here.
 								-- PULL_NEXT_COOLDOWN paces successive pulls; mobs_in_melee >= pull_next_cap
@@ -10185,6 +10162,30 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.76 - PullNext_OnLowHP fixed (Mark, 2026-11-18: "I see lots of messaging,
+        but I never see the provoke until after the current bat dies").
+        * The PullNextMax cap counted every mob within 10y -- idle,
+          unclaimed ones too. At Locus Dire Bats the next bat was within 10y
+          at 146 of 157 kills, so the pull was skipped every time (7 pulls in
+          4h, all at 10-16y). Now only mobs in our fight count (hs_is_hot:
+          claimed by the party, targeting or hitting one of us).
+        * A mob already in melee range was skipped as "will aggro
+          naturally" -- these bats don't. Now only a mob already fighting us
+          is skipped; an idle one in reach is Provoked.
+        * Logging: the scan line printed every tick and its flag hid every
+          skip reason. Now one line per mob and reason (lhp_note), plus
+          "no free mob within Ny to pull next".
+        * GSC log: one chat line per skillchain step when it lands --
+          "GSC: step 3 Light -- Tachi: Shoha (Mythrandiir)". The "X >> Y =
+          Z (step N)" line for your own chain WS goes to the log file only
+          at debug 2 (still in chat at debug 1, where the landing line
+          isn't shown).
+        * PullNext Provokes the next mob by ID (provoke_by_id: outgoing 0x01A,
+          category 0x09) and stays on the current mob. The old ST pull moved
+          the cursor, but while engaged <t> never followed: "target lock
+          failed" 2 of 3 tries on 11-18, ~5s of /targetoff + /attack on and
+          no Provoke. Provoke not ready / out of range -> one log line, the
+          after-kill Provoke takes it.
 v4.75 - Stacking watch, fight anchor, emergency-only step in (Mark,
         2026-11-18: DPS down after the ASUS restart -- the characters weren't
         stacked. Myth: 67 "out of range" in 30 min vs 8 in 53 min before;
