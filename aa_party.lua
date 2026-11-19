@@ -862,8 +862,8 @@ local HELP = {
     'aa sneak | invis | sneak invis  (spell, else Spectral Jig, else Silent Oil / Prism Powder)',
     'aa warp | aa 299  (party: a Warp II mage warps everyone, else each uses its Warp Ring)',
     'aa reload  (/t: that character, /p: everyone) | aa reload all  (whole party)',
-    'aa update [all|force]  (download the newest AutoAttack from GitHub, then reload)',
-    'aa update check | aa version  (compare with GitHub)  |  aa rollback  (back to the version before the last update)',
+    'aa update [me|force]  (whole party, any zone; "me" = only you -- newest AutoAttack from GitHub, then reload)',
+    'aa version [me]  (whole party compares with GitHub)  |  aa rollback [all]  (back to the version before the last update)',
 }
 
 local function cmd_follow(ctx, w)
@@ -1637,24 +1637,44 @@ local function ver_cmp(a, b)
     end
     return 0
 end
-local function http_get(url)
+local function http_get(url, extra)
     local ok_https, https = pcall(require, 'ssl.https')
     if not ok_https then return nil, 'Windower is missing ssl.https (LuaSec)' end
     local ltn12 = require('ltn12')
     https.TIMEOUT = 15
     local out = {}
-    local ok, r, code = pcall(https.request, {url = url, sink = ltn12.sink.table(out),
-        headers = {['User-Agent'] = 'AutoAttack/' .. tostring(_addon.version), ['Cache-Control'] = 'no-cache'}})
+    local hdr = {['User-Agent'] = 'AutoAttack/' .. tostring(_addon.version), ['Cache-Control'] = 'no-cache'}
+    for k, v in pairs(extra or {}) do hdr[k] = v end
+    local ok, r, code = pcall(https.request, {url = url, sink = ltn12.sink.table(out), headers = hdr})
     if not ok then return nil, tostring(r) end
     if not r then return nil, tostring(code) end
     if code ~= 200 then return nil, 'HTTP ' .. tostring(code) end
     return table.concat(out)
 end
+-- v4.79: raw.githubusercontent.com keeps .../main/ files for 5 minutes
+-- (cache-control max-age=300; a ?query doesn't get past it), so right after a
+-- release "aa version" said the old version was newest (Mark, 11-18 21:46).
+-- For the default address, ask the GitHub API for the newest commit on main
+-- and read the files from that commit (never stale). Falls back to main/.
+local function update_base()
+    local base = opt('update_url') or UPDATE_URL
+    if base:sub(-1) ~= '/' then base = base .. '/' end
+    local owner, repo, branch = base:match('^https://raw%.githubusercontent%.com/([^/]+)/([^/]+)/([^/]+)/$')
+    if not owner then return base end
+    local sha = http_get('https://api.github.com/repos/' .. owner .. '/' .. repo .. '/commits/' .. branch,
+                         {Accept = 'application/vnd.github.sha'})
+    sha = sha and sha:match('^%s*(%x+)%s*$')
+    if sha and #sha >= 7 then
+        return 'https://raw.githubusercontent.com/' .. owner .. '/' .. repo .. '/' .. sha .. '/'
+    end
+    dbg('UPDATE: GitHub API gave no commit -- reading ' .. branch .. '/ (may be up to 5 min old).')
+    return base
+end
+
 local function do_update(ctx, force)
     local me_n = my_name()
     local function bad(text) reply(ctx, me_n .. ': update failed -- ' .. text); say('UPDATE failed: ' .. text) end
-    local base = opt('update_url') or UPDATE_URL
-    if base:sub(-1) ~= '/' then base = base .. '/' end
+    local base = update_base()   -- v4.79
     local man, e = http_get(base .. 'manifest.txt')
     if not man then return bad('manifest.txt: ' .. tostring(e)) end
     local ver = man:match('version%s*=%s*([%d%.]+)')
@@ -1727,8 +1747,7 @@ end
 -- v4.65: aa update check / aa version -- compare with GitHub, install nothing
 local function cmd_update_check(ctx)
     local me_n, have = my_name(), tostring(_addon.version)
-    local base = opt('update_url') or UPDATE_URL
-    if base:sub(-1) ~= '/' then base = base .. '/' end
+    local base = update_base()   -- v4.79
     local man, e = http_get(base .. 'manifest.txt')
     if not man then return reply(ctx, me_n .. ': v' .. have .. ' -- could not read GitHub (' .. tostring(e) .. ').') end
     local ver = man:match('version%s*=%s*([%d%.]+)')
@@ -1763,10 +1782,16 @@ local function cmd_rollback(ctx, w)
 end
 
 local function cmd_update(ctx, w)
-    if w[2] == 'check' then return cmd_update_check(ctx) end   -- v4.65
-    if w[2] == 'all' and ctx.src ~= 'party' and has_players() then
+    -- v4.79: typed //aa update (and update check) goes to the whole party, in
+    -- any zone -- party chat reaches every member. "aa update me" = only you.
+    local mine = w[2] == 'me' or w[3] == 'me'
+    if w[2] == 'check' then
+        if ctx.src == 'local' and not mine and has_players() then return party_command('aa version') end
+        return cmd_update_check(ctx)
+    end
+    if not mine and (w[2] == 'all' or ctx.src == 'local') and ctx.src ~= 'party' and has_players() then
         if ctx.src == 'tell' then reply(ctx, my_name() .. ': updating the whole party.') end
-        return party_command('aa update')
+        return party_command('aa update' .. ((w[2] == 'force' or w[3] == 'force') and ' force' or ''))
     end
     if engaged() or party_fighting() then
         return reply(ctx, my_name() .. ': fighting -- send "aa update" again after the fight.')
@@ -1851,7 +1876,10 @@ handle_command = function(ctx, text)
             collectgarbage('count') / 1024))
     elseif c == 'reload' or c == 'rl' then cmd_reload(ctx, w)   -- v4.60
     elseif c == 'update' then cmd_update(ctx, w)                 -- v4.62
-    elseif c == 'version' then cmd_update_check(ctx)             -- v4.65
+    elseif c == 'version' then                                   -- v4.65
+        -- v4.79: typed //aa version asks the whole party ("aa version me" = only you)
+        if ctx.src == 'local' and w[2] ~= 'me' and has_players() then party_command('aa version')
+        else cmd_update_check(ctx) end
     elseif c == 'rollback' then cmd_rollback(ctx, w)             -- v4.65
     elseif c == 'help' then
         if ctx.src ~= 'party' or not ctx.self then

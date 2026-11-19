@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.78'
+_addon.version  = '4.79'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -10218,6 +10218,17 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.79 - aa update / aa version (Mark, 2026-11-18: "aa update should have all
+        party players update even when they are not in the same zone";
+        "aa version" said v4.77 was newest after v4.78 was out).
+        * GitHub's raw file server keeps main/ files for 5 minutes. Update and
+          version now ask the GitHub API for the newest commit and read the
+          files from that commit, so a release shows up at once (falls back
+          to main/ if the API doesn't answer).
+        * //aa update and //aa version typed on any character go to the whole
+          party through party chat -- every member, any zone. "aa update me"
+          / "aa version me" = only that character. aa reload / aa rollback
+          stay per character ("all" for the party).
 v4.78 - Staying stacked (Mark, 2026-11-18: "shadow and myth and scrach are
         not standing together anymore... make sure shadow is going back to
         starting points if he ever moves").
