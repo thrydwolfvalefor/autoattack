@@ -257,6 +257,7 @@ local group_skillchain = {enabled = true,
 	bank_hpp       = 10,     -- v4.71: no new chain at or under this mob HP% (unless 2000+ TP)
 	noshow_max     = 3,      -- v4.71: drop a teammate's WS after they pass on it this many times
 	block_tp       = 500,    -- v4.73: a better-placed teammate keeps their turn from this TP (seen late)
+	pre_wait       = 6.0,    -- v4.87: s others hold their opener for a teammate's once-per-mob WS (Full Break)
 	once_per_mob   = {['Great Axe'] = 'Full Break'},
 	filler_jobs    = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
 	fillers        = {},

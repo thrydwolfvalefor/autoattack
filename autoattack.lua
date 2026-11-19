@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.85'
+_addon.version  = '4.87'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -5019,7 +5019,7 @@ GSC_DEF = {
     enabled = true, min_players = 2, soon_tp = 750,
     window_open = 3.2, window_close = 10.0, window_step = 0, window_min = 8.0, ws_lead = 1.2,
     handoff_wait = 1.5, opener_wait = 2.0, max_steps = 8, plan_depth = 3, filler_wait_tp = 600,
-    bank_hpp = 10, noshow_max = 3, block_tp = 500,
+    bank_hpp = 10, noshow_max = 3, block_tp = 500, pre_wait = 6.0,
     once_per_mob = {['Great Axe'] = 'Full Break'},
     filler_jobs = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
     fillers = {},
@@ -5416,10 +5416,14 @@ function gsc_tick()
     end
     -- once per mob (Full Break) before chaining: players who still owe theirs
     -- on this mob open first (seen from the WS landing, so every AA agrees)
-    local forced = {}
+    local forced, owed_soon = {}, nil
     for _, m in ipairs(mem) do
-        local pw = m.engaged and not m.filler and m.tp >= 1000 and gsc_pre_ws(m, t.id)
-        if pw then forced[#forced + 1] = {m = m, ws = pw, key = 0} end
+        local pw = m.engaged and not m.filler and gsc_pre_ws(m, t.id)
+        if pw and m.tp >= 1000 then
+            forced[#forced + 1] = {m = m, ws = pw, key = 0}
+        elseif pw and not m.me and m.tp >= gsc_num('block_tp') then
+            owed_soon = owed_soon or {m = m, ws = pw}   -- v4.87: almost ready (seen late)
+        end
     end
     gsc_sort(forced)
     for k, f in ipairs(forced) do
@@ -5430,6 +5434,17 @@ function gsc_tick()
     end
     if #forced > 0 and now < idle_since + #forced * gsc_num('opener_wait') then
         gsc_dbg('pre', 'GSC: ' .. forced[1].m.name .. ' opens with ' .. forced[1].ws .. ' (once per mob) -- waiting.')
+        return 'wait'
+    end
+    -- v4.87: a teammate who still owes Full Break and is at block_tp or more:
+    -- wait up to pre_wait from the start of the mob (Mark, 11-19: "let's do a
+    -- slightly longer wait so shadow can open with full break, since it is the
+    -- best sc we have"). The 2s opener_wait ran out just as Shadow went --
+    -- 32 opener collisions in 308 kills. Below block_tp: no long wait.
+    local who = (#forced > 0 and not forced[1].m.me and forced[1]) or owed_soon
+    if who and now < idle_since + gsc_num('pre_wait') then
+        gsc_dbg('pre', 'GSC: ' .. who.m.name .. ' opens with ' .. who.ws .. ' (once per mob) -- waiting up to ' ..
+                string.format('%.0f', gsc_num('pre_wait')) .. 's.')
         return 'wait'
     end
     if me.filler then
@@ -10268,6 +10283,14 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.87 - Longer wait for Shadow's Full Break (Mark, 2026-11-19: "let's do a
+        slightly longer wait so shadow can open with full break, since it is
+        the best sc we have"). At the start of a mob, while a teammate still
+        owes their once-per-mob WS (Full Break) and is at block_tp (500) or
+        more, everyone else holds their opener for up to pre_wait (6s,
+        group_skillchain.pre_wait) instead of opener_wait (2s). The 2s ran out
+        just as Shadow went -- 32 opener collisions in 308 kills on v4.85.
+        Below 500 TP nobody waits on him. (v4.86 was tried and not released.)
 v4.85 - Hotfix (Mark, 2026-11-19 11:27).
         * "autoattack.lua:1434: attempt to index local 'ids' (a nil value)",
           over and over: v4.83's new mob_in_our_fight(m, ids, idx) replaced
