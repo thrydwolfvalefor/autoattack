@@ -1867,6 +1867,7 @@ local party = {enabled = true,
 	restack_slack  = 1.0,    -- v4.75: yalms past party_range before a re-stack
 	restack_max    = 10,     -- v4.75: farthest a member re-stacks while fighting (farther: between fights)
 	restack_delay  = 2,      -- v4.75: s off the stack before re-stacking
+	restack_far_secs = 20,   -- v4.78: farther than restack_max this long while fighting: re-stack anyway (0 = never)
 	stack_timeout  = 30,     -- s a member runs toward the leader before giving up
 	stack_wait     = 5,      -- s the leader waits for members to stack before the first pull
 	trust_wait     = 120,    -- s after dropping Trusts before the inviting leader calls them again

@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.77** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.78** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -516,6 +516,7 @@ The list is walked in order and wraps back to the first entry. The position rese
 * `aa fight` on the leader saves its spot. In PULL mode the leader runs back to it whenever it is more than 1 yalm away: between mobs always, while engaged only if the mob can still be hit from the spot.
 * Party members in `aa fight` watch their distance to the leader. Engaged and more than `party_range` + `restack_slack` (2 yalms) away for `restack_delay` (2 s), but within `restack_max` (10 yalms): they re-stack right away, mid-fight, and face the mob again. Farther than that: logged once, stacked between fights. `aa fight` also stacks a member who is already fighting. `stack_watch = false` turns it off.
 * All of the above is `aa fight` only. `aa assist` / `aa pull` on their own (typed, by tell or party chat) end fight mode: no following, re-stacking or fight spot -- the player stays where they are.
+* v4.78: the leader goes back to the fight spot mid-fight too (the mob follows), and logs a POSITION line every minute ("NOT STACKED" in chat when a player is more than 4y off). Members more than `restack_max` away re-stack after `restack_far_secs` (20s); `aa stack` works while fighting.
 * Stepping in to a mob is an emergency only (`STEP_IN_EMERGENCY`): on trouble the leader Provokes, then shoots (if a ranged weapon is ready); it steps in only when the mob keeps hitting it with none of its rounds landing, or nothing fixed it in 12 s. "Out of range" alone never makes it step in.
 
 ### Group skillchain (v4.70)

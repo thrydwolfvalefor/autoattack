@@ -65,6 +65,7 @@ local D = {
     restack_slack  = 1.0,    -- v4.75: yalms past party_range before a re-stack
     restack_max    = 10,     -- v4.75: farthest a member re-stacks while fighting (farther: between fights)
     restack_delay  = 2,      -- v4.75: s off the stack before re-stacking
+    restack_far_secs = 20,   -- v4.78: farther than restack_max this long while fighting: re-stack anyway (0 = never)
     stack_timeout  = 30,     -- s a member runs toward the leader before giving up
     stack_wait     = 5,      -- s the leader waits for members to stack before the first pull
     trust_wait     = 120,    -- s after dropping trusts before the inviting leader calls them again
@@ -436,9 +437,18 @@ local function stack_watch()
     if d <= opt('party_range') + opt('restack_slack') then P.sw_since = nil; P.sw_far = nil; return end
     if d > opt('restack_max') then
         if not P.sw_far then
-            P.sw_far = true
+            P.sw_far = now
             say(string.format('STACK: %.1fy from %s -- too far to re-stack mid-fight, stacking between fights.', d, P.follow))
         end
+        -- v4.78: with hot switching "between fights" never comes -- after
+        -- restack_far_secs go anyway (the mob follows you)
+        local far = tonumber(opt('restack_far_secs')) or 0
+        if far <= 0 or now - P.sw_far < far then return end
+        P.sw_far = nil
+        P.restacks = (P.restacks or 0) + 1
+        say(string.format('STACK: still %.1fy from %s after %ds of fighting -- re-stacking now (%d this session).',
+            d, P.follow, far, P.restacks))
+        P.stack = {name = P.follow, deadline = now + opt('stack_timeout'), engaged_ok = true}
         return
     end
     P.sw_since = P.sw_since or now
@@ -886,10 +896,12 @@ local function cmd_stack(ctx, w)
     if lm and lm.zone and lm.zone ~= zone_id() then
         return reply(ctx, my_name() .. ': ' .. who .. ' is not in my zone -- not stacking.')
     end
-    if engaged() then return reply(ctx, my_name() .. ' is fighting -- not stacking.') end
+    -- v4.78: stacks while fighting too (asked for; the mob follows you)
+    local fighting = engaged()
     local d = dist_to_name(who)
     if not d then return reply(ctx, my_name() .. ": can't see " .. who .. '.') end
-    if stack_on(who) then
+    if fighting then say(string.format('fighting, %.1fy from %s -- stacking anyway.', d, who)) end
+    if stack_on(who, nil, nil, fighting) then
         local d2 = dist_to_name(who)
         say(string.format('stacked on %s (%.2fy).', who, d2 or 0))
     else

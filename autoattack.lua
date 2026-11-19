@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.77'
+_addon.version  = '4.78'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -4024,6 +4024,38 @@ ANCHOR_COOLDOWN = 3.0    -- s between two returns
 ANCHOR_RUN_TIME = 6.0    -- s: longest run back
 AA_ANCHOR       = nil    -- {x, y, zone}
 anchor_last     = 0
+-- v4.78: one POSITION line a minute while the spot is set: the leader's
+-- distance from it and each player's distance from the leader (chat when
+-- anyone is off the stack, log file otherwise)
+ANCHOR_REPORT_SECS = 60
+ANCHOR_FAR         = 4.0    -- yalms: a player farther than this from the leader is "not stacked"
+anchor_report_at   = 0
+function anchor_report(me, d)
+    local now = os.clock()
+    if now - anchor_report_at < ANCHOR_REPORT_SECS then return end
+    anchor_report_at = now
+    local party = windower.ffxi.get_party()
+    local parts, far = {}, 0
+    for k = 1, 5 do
+        local m = party and party['p' .. k]
+        if type(m) == 'table' and m.name then
+            local mob = m.mob
+            if mob and mob.is_npc then
+                -- a Trust: not reported
+            elseif mob and mob.x then
+                local dm = math.sqrt((mob.x - me.x) ^ 2 + (mob.y - me.y) ^ 2)
+                parts[#parts + 1] = string.format('%s %.1fy', m.name, dm)
+                if dm > ANCHOR_FAR then far = far + 1 end
+            else
+                parts[#parts + 1] = m.name .. ' not in view'
+                far = far + 1
+            end
+        end
+    end
+    local line = string.format('POSITION: leader %.1fy from the fight spot; %s', d,
+        #parts > 0 and table.concat(parts, ', ') or 'no other players')
+    if far > 0 or d > 3 then info_msg(line .. ' -- NOT STACKED') else debug_msg(line) end
+end
 function aa_set_anchor()
     local me = windower.ffxi.get_mob_by_target('me')
     local info = windower.ffxi.get_info()
@@ -4050,16 +4082,27 @@ function anchor_check()
     local p = windower.ffxi.get_player()
     if not me or not me.x or not p or (p.vitals and p.vitals.hp == 0) then return end
     local d = math.sqrt((A.x - me.x) ^ 2 + (A.y - me.y) ^ 2)
+    anchor_report(me, d)   -- v4.78
     if d <= ANCHOR_TOL then return end
+    -- v4.78: not inside our own WS animation -- we can't move then, and 9 of
+    -- the "blocked on the way back" stops on 11-18 were right after a WS
+    if aa_ws_ago() < 3.0 then return end
     local t = windower.ffxi.get_mob_by_target('t')
     if p.status == 1 and t and t.hpp and t.hpp > 0 and t.x then
-        -- engaged: only if the mob can still be hit from the fight spot
+        -- engaged: go back if the mob can still be hit from the fight spot,
+        -- v4.78: or if it is in our fight -- it follows us back. With hot
+        -- switching there was never a moment between mobs, so the leader
+        -- only went back 13 times in 3 hours and stayed 1-3y off the spot.
         local reach = 3.0 + (t.model_size or 2.0)
-        if math.sqrt((A.x - t.x) ^ 2 + (A.y - t.y) ^ 2) > reach then return end
+        if math.sqrt((A.x - t.x) ^ 2 + (A.y - t.y) ^ 2) > reach then
+            local ids, idx = hs_party_sets(p)
+            if not hs_is_hot(t, ids, idx) then return end
+        end
     end
     anchor_last = now
     info_msg(string.format('ANCHOR: %.1fy from the fight spot -- moving back.', d))
-    local t0, lx, ly, chk = os.clock(), me.x, me.y, os.clock()
+    -- v4.78: first "blocked" check after 1s, not 0.6s (running takes a moment to start)
+    local t0, lx, ly, chk = os.clock(), me.x, me.y, os.clock() + 0.4
     while os.clock() - t0 < ANCHOR_RUN_TIME do
         me = windower.ffxi.get_mob_by_target('me')
         if not auto_attack or not me or not me.x then break end
@@ -10175,6 +10218,25 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.78 - Staying stacked (Mark, 2026-11-18: "shadow and myth and scrach are
+        not standing together anymore... make sure shadow is going back to
+        starting points if he ever moves").
+        * Leader: while engaged, ANCHOR only went back when the mob could
+          still be hit from the fight spot. With hot switching there's never
+          a gap between mobs, so Shadow went back 13 times in 3 hours and sat
+          1-3y off the spot. Now he also goes back when the mob is in our
+          fight (it follows him).
+        * Leader: no run back inside our own WS animation (can't move then:
+          9 "blocked on the way back" stops), and the blocked check waits 1s.
+        * Leader: a POSITION line every minute -- distance from the spot and
+          each player's distance from the leader; in chat with
+          "NOT STACKED" when anyone is more than 4y away or not in view.
+        * Members: //aa stack / aa stack while fighting now stacks (it used
+          to answer "is fighting -- not stacking").
+        * Members: more than restack_max (10y) away while fighting -- the
+          re-stack waited for "between fights", which never comes with hot
+          switching. After restack_far_secs (20s) they re-stack anyway
+          (the mob follows them). restack_far_secs = 0 turns that off.
 v4.77 - Pull-next Provoke timing, damage model refit (Mark, 2026-11-18
         evening review of 227 kills on v4.76).
         * PullNext Provoke waits until JA_AFTER_WS_GAP (4s) after our own WS.
