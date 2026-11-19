@@ -283,7 +283,7 @@ local group_skillchain = {enabled = true,
 	players = {},    -- v4.73: {Scracheebrat = {'Savage Blade'}} -- a player's own WS list instead of pools[weapon]
 	power = {},      -- WS damage (k), e.g. {['Savage Blade'] = 9.0}; built in from the 11-18 logs
 	sc_power = {},   -- v4.72: Light skillchain damage (k) when this WS closes it; built in:
-	                 -- Savage Blade 31.9, Upheaval 25.1, Ukko's Fury 24.6, Fudo 16.2, Shoha 16.1, Kasha 15.1
+	                 -- v4.77: Upheaval 28.4, Ukko's Fury 27.3, Shoha 20.6, Fudo 16.7, Kasha 14.7, Savage Blade 11.9
 	}
 
 -- ---------------------------------------------------------------------------

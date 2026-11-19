@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.76'
+_addon.version  = '4.77'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -2500,6 +2500,8 @@ end
 -- Globals on purpose (main chunk is at the local / upvalue limit).
 -- =========================================================================
 JA_AFTER_WS_GAP = 4.0
+-- v4.77: seconds since our own last WS (global, for code past the upvalue limit)
+function aa_ws_ago() return os.clock() - last_ws_time end
 JA_TRY          = {name = nil, at = 0, last = 0, uses = 0}
 JA_FAILS        = {}
 JA_FAIL_MAX     = 3
@@ -4921,13 +4923,16 @@ GSC_SKILL = {[1] = 'Hand-to-Hand', [2] = 'Dagger', [3] = 'Sword', [4] = 'Great S
 -- GSC_MULT    = skillchain damage by level, relative to Light (Fusion closed
 --               by Upheaval 13.4k = 0.55); 'end' = Light from two Light WS
 --               (no further step, ~1.25x)
-GSC_POWER = {['Upheaval'] = 15.0, ["Ukko's Fury"] = 13.5, ['Full Break'] = 3.2,
-             ['Tachi: Shoha'] = 7.8, ['Tachi: Fudo'] = 8.0, ['Tachi: Kasha'] = 7.3, ['Tachi: Rana'] = 4.2,
-             ['Savage Blade'] = 7.7, ['Requiescat'] = 3.0, ['Knights of Round'] = 9.0}
-GSC_SCPOWER = {['Upheaval'] = 25.1, ["Ukko's Fury"] = 24.6, ['Tachi: Fudo'] = 16.2, ['Tachi: Shoha'] = 16.1,
-               ['Tachi: Kasha'] = 15.1, ['Savage Blade'] = 31.9, ['Knights of Round'] = 35.7,
+-- v4.77: refit on 227 kills (11-18 18:14-21:11, ~1,150 Light). Savage Blade
+-- closing a Light is 11.9k, not 31.9k (the v4.72 figure came from a handful);
+-- Light-on-Light is ~1.35x (Ukko 36.8k) to ~1.55x (Fudo 26.2k) the plain Light.
+GSC_POWER = {['Upheaval'] = 16.5, ["Ukko's Fury"] = 13.4, ['Full Break'] = 3.5,
+             ['Tachi: Shoha'] = 8.8, ['Tachi: Fudo'] = 8.2, ['Tachi: Kasha'] = 7.3, ['Tachi: Rana'] = 3.7,
+             ['Savage Blade'] = 7.6, ['Requiescat'] = 3.0, ['Knights of Round'] = 9.0}
+GSC_SCPOWER = {['Upheaval'] = 28.4, ["Ukko's Fury"] = 27.3, ['Tachi: Fudo'] = 16.7, ['Tachi: Shoha'] = 20.6,
+               ['Tachi: Kasha'] = 14.7, ['Savage Blade'] = 11.9, ['Knights of Round'] = 35.7,
                ['Full Break'] = 8.0, ['Tachi: Rana'] = 10.0}
-GSC_MULT = {[1] = 0.25, [2] = 0.55, [3] = 1.0, ['end'] = 1.25}
+GSC_MULT = {[1] = 0.25, [2] = 0.55, [3] = 1.0, ['end'] = 1.4}
 -- defaults for anything missing from aa_config.lua -> group_skillchain
 GSC_DEF = {
     enabled = true, min_players = 2, soon_tp = 750,
@@ -5154,7 +5159,10 @@ function gsc_follow(props, depth, prev_id, mem, step)
     if depth <= 0 or not props then return 0 end
     local best, soon = 0, gsc_num('soon_tp')
     for _, m in ipairs(mem) do
-        if m.engaged and m.id ~= prev_id and (step > 1 or m.tp >= soon) then
+        -- v4.77: a later step counts only players already at block_tp (500): with
+        -- everyone counted, Shadow's Ukko closing Fusion scored a Fudo from Myth at
+        -- 0 TP, and beat Scrach's Light + Shadow's Ukko Light-on-Light (36.8k)
+        if m.engaged and m.id ~= prev_id and m.tp >= (step > 1 and gsc_num('block_tp') or soon) then
             for _, ws in ipairs(m.pool) do
                 local r, l, term = gsc_result(props, ws)
                 if r then
@@ -8233,7 +8241,12 @@ function main_logic_loop(my_gen)
 								if not next_mob.id or next_mob.id <= 0 then
 									debug_msg('Low HP pull: next_mob has invalid ID, skipping.')
 								else
-								if next_d <= PROVOKE_PULL_RANGE and provoke_pull_ready() then
+								if next_d <= PROVOKE_PULL_RANGE and provoke_pull_ready() and aa_ws_ago() < JA_AFTER_WS_GAP then
+									-- v4.77: a JA inside our WS animation is dropped by the server --
+									-- 11-18: 129 of 129 pull Provokes sent <3s after our WS failed,
+									-- 160 of 166 sent >=4s after it worked. Wait, try next tick.
+									lhp_note(cur.id, 'wsgap', 'Low HP pull: waiting for our WS animation before Provoking ' .. (next_mob.name or '?') .. '.')
+								elseif next_d <= PROVOKE_PULL_RANGE and provoke_pull_ready() then
 									info_msg('Next mob: ' .. (next_mob.name or '?') .. ' (' .. string.format('%.1f', next_d) ..
 										'y) -- Provoke, staying on ' .. (cur.name or '?') .. ' (' .. tostring(cur.hpp) .. '%).')
 									if provoke_by_id(next_mob, 'pull next') then
@@ -10162,6 +10175,24 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.77 - Pull-next Provoke timing, damage model refit (Mark, 2026-11-18
+        evening review of 227 kills on v4.76).
+        * PullNext Provoke waits until JA_AFTER_WS_GAP (4s) after our own WS.
+          v4.76 sent 318 pull Provokes: every one sent under 3s after our WS
+          was dropped (129 of 129, "no Provoke seen"), 160 of 166 sent 4s+
+          after it landed. The low-HP check usually fires right after the WS
+          that put the mob under the threshold, so it now waits a tick or two.
+        * Damage model refit (GSC_POWER / GSC_SCPOWER / GSC_MULT['end']):
+          Light closed by Upheaval 28.4k, Ukko's Fury 27.3k, Shoha 20.6k, Fudo
+          16.7k, Kasha 14.7k, Savage Blade 11.9k (was 31.9k -- Scrach's Light
+          was overrated, so Myth's Shoha now closes Upheaval when he has TP);
+          Light-on-Light 'end' 1.25 -> 1.4 (Ukko 36.8k, Fudo 26.2k).
+        * Checked, unchanged: Light-on-Light still ends the chain (1 of 30
+          continued), Light from a pair continues ~90% and its closer averages
+          29-40k; the chain tracker and opener-after-end are right.
+        * Plan look-ahead counts a later step only for players already at
+          500 TP (block_tp); it used to count everyone, so a WS was scored
+          with a follow-up from a player at 0 TP.
 v4.76 - PullNext_OnLowHP fixed (Mark, 2026-11-18: "I see lots of messaging,
         but I never see the provoke until after the current bat dies").
         * The PullNextMax cap counted every mob within 10y -- idle,
