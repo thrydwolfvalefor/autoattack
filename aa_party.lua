@@ -2027,6 +2027,7 @@ windower.register_event('zone change', function()
     P.warping = false
     aa_warp_restore(true)   -- v4.53: old right ring back on after loading
     run_stop()
+    P.zone_quiet = os.clock() + 15   -- v4.80: the party list reloads after a zone
 end)
 
 -- v4.46: a player joining the party (any invite, typed or AA's) starts the
@@ -2036,9 +2037,24 @@ local function watch_party()
     if now < P.watch_next then return end
     P.watch_next = now + 1
     local n, lead = players(), i_lead()
-    if P.watch_players and n > P.watch_players then
+    -- v4.80: a join is a player NAME not in the party in the last 2 minutes,
+    -- and not within 15s of zoning. While you zone, the party list reloads
+    -- (Trusts briefly look like players, members drop out and come back), and
+    -- the old head count said "a player joined" on every zone (Mark, 11-18).
+    P.seen = P.seen or {}
+    local joined
+    local list = members()
+    if P.watch_players and n > P.watch_players and now >= (P.zone_quiet or 0) then
+        local mine = my_name()
+        for _, m in ipairs(list) do
+            local t = P.seen[m.name]
+            if not m.trust and m.name ~= mine and not (t and now - t < 120) then joined = m.name end
+        end
+    end
+    for _, m in ipairs(list) do P.seen[m.name] = now end
+    if joined then
         P.last_join = now
-        dbg('a player joined -- no Trusts for ' .. opt('trust_wait') .. 's.')
+        dbg(joined .. ' joined the party -- no Trusts for ' .. opt('trust_wait') .. 's.')
     end
     if P.watch_lead == false and lead and has_players() then
         P.last_join = nil

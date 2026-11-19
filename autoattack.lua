@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.79'
+_addon.version  = '4.80'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -10218,6 +10218,13 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.80 - No "a player joined" on zoning (Mark, 2026-11-18). The join watch
+        counted players: while you zone the party list reloads (Trusts look
+        like players for a moment, members drop out and come back), so every
+        zone said "a player joined -- no Trusts for 120s" and held Trusts for
+        2 minutes. Now a join is a player name that wasn't in the party in
+        the last 2 minutes, and nothing counts for 15s after a zone. The line
+        names who joined.
 v4.79 - aa update / aa version (Mark, 2026-11-18: "aa update should have all
         party players update even when they are not in the same zone";
         "aa version" said v4.77 was newest after v4.78 was out).
