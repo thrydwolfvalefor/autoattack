@@ -453,7 +453,8 @@ local job_config = {
 			{name='Retaliation', target='<me>', min_time=180, buff_id=405},				-- 3 minute recast, 	Movement Speed -12%
 			{name='Restraint', target='<me>', min_time=600, buff_id=435}, 				-- 10 minute recast
 			{name='Blood Rage', target='<me>', min_time=300, buff_id=460}, 				-- 5 minute recast
-			{name='Brazen Rush', target='<me>', min_time=3600, buff_id=490}, 			-- 60 minute recast
+			{name='Brazen Rush', target='<me>', min_time=3600, buff_id=490, ep_chain_min=20}, 	-- 60 minute recast. v4.88: saved for EP chain #20+
+			{name='Mighty Strikes', target='<me>', min_time=3600, buff_id=44, ep_chain_min=20}, 	-- v4.88: SP1, 60 minute recast, 45s all crits -- saved for EP chain #20+
 			--DNC
 			{name='Haste Samba', target='<me>', tp=350, min_time=90, buff_id=370},			
 			-- {name='Quick Step', target='<t>', tp=100, min_time=30, uses_per_mob=999},
@@ -662,6 +663,7 @@ local job_config = {
             {name='Berserk', target='<me>', tp=0, min_time=300}, -- WAR skill for bonus damage
             {name="Meditate", target='<me>', tp=0, min_time=180}, -- Gain TP
             {name='Sekkanoki', target='<me>', tp=0, min_time=300}, -- Use only 1000 tp on next WS
+            {name='Meikyo Shisui', target='<me>', tp=0, min_time=3600, buff_id=54, ep_chain_min=20}, -- v4.88: SP1, 60 minute recast -- saved for EP chain #20+
             -- {name='Provoke', target='<t>', tp=0, min_time=30}, -- Keep Hate
         },
         ws_list = {enabled = true, -- set to true to enable using of Weaponskills
@@ -1374,6 +1376,8 @@ local job_config = {
     --                       the recast timer is N seconds or less
     --   buff_stack=N        with buff_id: skip only once N copies are up
     --   need_buff=ID        only usable WHILE this buff is up
+    --   ep_chain_min=N      v4.88: saved for the kill that would be EP/EXP chain #N
+    --                       or higher (used as normal when no chain is running)
     --   max_dist=N          '<t>' abilities: only fire when you are within N
     --                       yalms of the mob's EDGE (center distance minus the
     --                       mob's model size, so big mobs work too). Without

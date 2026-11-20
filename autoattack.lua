@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.87'
+_addon.version  = '4.88'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -2500,6 +2500,32 @@ end
 -- Globals on purpose (main chunk is at the local / upvalue limit).
 -- =========================================================================
 JA_AFTER_WS_GAP = 4.0
+-- v4.88: EP / EXP chain. The kill line "Master chain #N!<0x07>Name gains X
+-- exemplar points." (or EXP / limit / capacity) tells the chain number; a kill
+-- line without "chain #" is chain 0. On 11-19 the chain reset at #23-25 every
+-- time (EP #0 317 -> #23 450): at high numbers the window for the next kill
+-- is short, so burst abilities (ep_chain_min) are saved for those kills.
+EP_CHAIN       = {n = -1, t = -9999}
+EP_CHAIN_FRESH = 180    -- s: no chain kill seen in this long -> not chaining, ep_chain_min is ignored
+function ep_chain_note(text)
+    if not text or not text:find(' gains ', 1, true) then return end
+    text = text:gsub('[%c\128-\255]', ' ')   -- color codes / separators
+    local low = text:lower()
+    if not (low:find('exemplar point', 1, true) or low:find('experience point', 1, true)
+            or low:find('limit point', 1, true) or low:find('capacity point', 1, true)) then return end
+    local p = windower.ffxi.get_player()
+    if not p or not p.name or not text:find(p.name .. ' gains ', 1, true) then return end
+    local n = tonumber(text:match('[Cc]hain #(%d+)')) or 0
+    if n ~= EP_CHAIN.n and debug_msg then debug_msg('EP-CHAIN: #' .. n .. ' (next kill #' .. (n + 1) .. ').') end
+    EP_CHAIN = {n = n, t = os.clock()}
+end
+-- true when an ability with ep_chain_min = M may go: the kill we're on would
+-- be chain #M or higher -- or no chain is running (outside EP / EXP areas)
+function ep_chain_ok(min)
+    if not min then return true end
+    if os.clock() - EP_CHAIN.t > EP_CHAIN_FRESH then return true end
+    return EP_CHAIN.n + 1 >= min
+end
 -- v4.77: seconds since our own last WS (global, for code past the upvalue limit)
 function aa_ws_ago() return os.clock() - last_ws_time end
 JA_TRY          = {name = nil, at = 0, last = 0, uses = 0}
@@ -2625,6 +2651,10 @@ function use_job_abilities()
 			end
 			-- v4.70: hold a JA that would cancel a stronger one (Defender -> Berserk)
 			if not has_buff and ja_yield_skip(entry, player.buffs, abil_recasts, available_abilities) then
+				has_buff = true
+			end
+			-- v4.88: ep_chain_min = N -> saved for the kill that would be chain #N+
+			if not has_buff and entry.ep_chain_min and not ep_chain_ok(entry.ep_chain_min) then
 				has_buff = true
 			end
 
@@ -10283,6 +10313,17 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.88 - Burst for the high EP chain (Mark, 2026-11-19: "yes, lets build
+        those updates").
+        * EP / EXP chain tracking: the kill line ("Master chain #N!" ...
+          "gains X exemplar points") gives the chain number (EP-CHAIN debug
+          line). On 11-19 the chain reset at #23-25 every time, even with
+          37s between kills, while EP rises from 317 (#0) to 450 (#23).
+        * abilities take ep_chain_min = N: used only when the kill we're on
+          would be chain #N or higher. No chain seen for 3 minutes (outside
+          EP areas) -> used as normal.
+        * Config: WAR Mighty Strikes (buff 44) and Brazen Rush, SAM Meikyo
+          Shisui (buff 54), all with ep_chain_min = 20.
 v4.87 - Longer wait for Shadow's Full Break (Mark, 2026-11-19: "let's do a
         slightly longer wait so shadow can open with full break, since it is
         the best sc we have"). At the start of a mob, while a teammate still
@@ -10718,6 +10759,7 @@ end)
 -- v3.96: a treasure casket spawning also changes the entity table; hold
 -- set_target() for TARGET_QUIET_WINDOW.
 windower.register_event('incoming text', function(original)
+    if original and original:find(' gains ', 1, true) then ep_chain_note(original) end   -- v4.88
     if original and original:find('concealing a treasure chest', 1, true) then
         target_quiet('treasure casket appeared')
     end
