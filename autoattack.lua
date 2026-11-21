@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.93'
+_addon.version  = '4.94'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -4045,11 +4045,15 @@ function anchor_report(me, d)
     anchor_report_at = now
     local party = windower.ffxi.get_party()
     local parts, far = {}, 0
+    local _info = windower.ffxi.get_info()   -- v4.94: members in another zone aren't "not stacked"
+    local _z = _info and _info.zone
     for k = 1, 5 do
         local m = party and party['p' .. k]
         if type(m) == 'table' and m.name then
             local mob = m.mob
-            if mob and mob.is_npc then
+            if m.zone and _z and m.zone ~= _z then
+                parts[#parts + 1] = m.name .. ' in another zone'
+            elseif mob and mob.is_npc then
                 -- a Trust: not reported
             elseif mob and mob.x then
                 local dm = math.sqrt((mob.x - me.x) ^ 2 + (mob.y - me.y) ^ 2)
@@ -6087,7 +6091,11 @@ function gsc_watch()
     if ds_state and ds_state.on then return end   -- Dread Spikes weapon swap
     if not gsc_has_players() then GSC_P.sig = nil; GSC_P.sig_sent = nil; return end
     local pl = windower.ffxi.get_player()
-    if not pl or pl.status ~= 0 then return end    -- mid-fight swaps (red procs) don't count
+    -- mid-fight swaps (red procs) don't count -- but the first profile after a
+    -- load goes out even while engaged (v4.94: after a reload mid-fight the
+    -- profiles came 2 min late, and Shadow held 5 times for Vayne's Entropy /
+    -- Insurgency, which Vayne doesn't have -- he only has Cross Reaper)
+    if not pl or (pl.status ~= 0 and GSC_P.sig_sent) then return end
     local p = gsc_self_profile()
     if not p or not p.weapon then return end
     local sig = gsc_prof_sig(p)
@@ -10949,6 +10957,18 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.94 - Group skillchain after a reload mid-fight; POSITION (Mark, 2026-11-21,
+        bats with Vayne, Scrach and Shadow: "Is there any changes that need to
+        be made based on how GSC is working / sharing data").
+        * The profile (job, weapon, WS) went out only while idle, so after a
+          reload mid-fight it took 2 minutes (02:47:51 -> 02:49:52). Until then
+          Vayne had no profile and was planned from the default Scythe list:
+          Shadow held 5 times for Entropy / Insurgency / Ruinator, and Vayne
+          only has Cross Reaper. The first profile after a load now goes out
+          right away, engaged or not (others answer with theirs). Mid-fight
+          weapon swaps still don't trigger one.
+        * POSITION: a party member in another zone (Mythrandiir) no longer
+          counts as "not in view -- NOT STACKED".
 v4.93 - aa update previous / aa update <version> / aa update list (Mark,
         2026-11-21: "'aa update previous' can be used to select the previous
         version if the current one is having issues, or 'aa update 4.12'").
