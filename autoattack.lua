@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.00'
+_addon.version  = '5.01'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -4167,11 +4167,19 @@ function engage_lag_flush()
         local st = ENGAGE_STATS[n] or {lags = {}, never = 0}
         ENGAGE_STATS[n] = st
         local lag = E.got[n]
+        -- v5.01 (debug 2): how they got on it, and where they were at 3s when slow
+        local _x = ''
+        if (debug_level or 0) >= 2 then
+            local bits = {}
+            if lag and E.how and E.how[n] then bits[#bits + 1] = E.how[n] end
+            if E.snap and E.snap[n] and (not lag or lag > PSTAT_SLOW) then bits[#bits + 1] = 'at 3s: ' .. E.snap[n] end
+            if #bits > 0 then _x = ' [' .. table.concat(bits, '; ') .. ']' end
+        end
         if lag then
-            parts[#parts + 1] = string.format('%s %.1fs', n, lag)
+            parts[#parts + 1] = string.format('%s %.1fs', n, lag) .. _x
             st.lags[#st.lags + 1] = lag
         else
-            parts[#parts + 1] = n .. ' never'
+            parts[#parts + 1] = n .. ' never' .. _x
             st.never = st.never + 1
         end
     end
@@ -4185,6 +4193,16 @@ function engage_lag_flush()
         end
         debug_msg('ENGAGE-LAG: ' .. tostring(E.name) .. ' -- ' .. table.concat(parts, ', ') ..
                   string.format(' (mob %.1fy from us when picked)', E.away or 0) .. '.')
+        -- v5.01 (debug 2): melee rounds each player landed on it (misses count) while it was our target
+        if (debug_level or 0) >= 2 and E.rounds and E.t0 then
+            local rn, rs = {}, {}
+            for n in pairs(E.rounds) do rn[#rn + 1] = n end
+            table.sort(rn)
+            for _, n in ipairs(rn) do rs[#rs + 1] = n .. ' ' .. E.rounds[n] end
+            for _, n in ipairs(names) do if not E.rounds[n] then rs[#rs + 1] = n .. ' 0' end end
+            debug_msg(string.format('MELEE-ROUNDS: %s, %.0fs as our target -- %s.', tostring(E.name), os.clock() - E.t0,
+                (#rs > 0) and table.concat(rs, ', ') or 'none seen'))
+        end
     end
     ENGAGE_LAG = {mob = 0}
 end
@@ -4225,6 +4243,7 @@ function engage_lag_tick()
     if E.mob ~= t.id then
         engage_lag_flush()
         E = {mob = t.id, idx = t.index, name = t.name, t0 = now, got = {}, seen = {}, done = false,
+             how = {}, snap = {}, rounds = {},   -- v5.01 (debug 2)
              away = t.distance and math.sqrt(t.distance) or 0}   -- v4.99: how far the mob was when picked
         ENGAGE_LAG = E
     end
@@ -4237,10 +4256,22 @@ function engage_lag_tick()
             local _a = PARTY_ACT and m.mob.id and PARTY_ACT[m.mob.id]
             if _a and _a.mob == E.mob and _a.t >= E.t0 then
                 E.got[m.name] = _a.t - E.t0
+                if E.how then E.how[m.name] = ENGAGE_HOW[_a.cat] or 'action' end
             elseif m.mob.status == 1 and m.mob.target_index == E.idx then
                 E.got[m.name] = now - E.t0
+                if E.how then E.how[m.name] = 'engaged' end
             else
                 waiting = waiting + 1
+                -- v5.01 (debug 2): where a member still not on it was, 3s in
+                if E.snap and not E.snap[m.name] and now - E.t0 >= 3 and (debug_level or 0) >= 2 then
+                    local st = (m.mob.status == 1) and 'engaged' or ((m.mob.status == 0) and 'idle' or ('status ' .. tostring(m.mob.status)))
+                    local on = ''
+                    if m.mob.status == 1 then
+                        on = ((m.mob.target_index or 0) == E.idx and ' on it') or (((m.mob.target_index or 0) > 0) and ' on another mob') or ''
+                    end
+                    local d = (m.mob.x and t.x) and math.sqrt((m.mob.x - t.x) ^ 2 + (m.mob.y - t.y) ^ 2) or nil
+                    E.snap[m.name] = st .. on .. (d and string.format(', %.1fy from it', d) or '')
+                end
             end
         end
     end
@@ -4257,8 +4288,16 @@ function party_act_note(act)
     local t1 = act.targets and act.targets[1]
     if not t1 or not t1.id or t1.id == act.actor_id or not PARTY_ACT_CATS[act.category] then return end
     local m = windower.ffxi.get_mob_by_id(t1.id)
-    if m and m.spawn_type == 16 then PARTY_ACT[act.actor_id] = {mob = t1.id, t = os.clock()} end
+    if m and m.spawn_type == 16 then PARTY_ACT[act.actor_id] = {mob = t1.id, t = os.clock(), cat = act.category} end
+    -- v5.01 (debug 2): melee rounds per player on the leader's mob
+    local E = ENGAGE_LAG
+    if act.category == 1 and E and E.mob == t1.id and E.rounds and (debug_level or 0) >= 2 then
+        local who = windower.ffxi.get_mob_by_id(act.actor_id)
+        local n = who and who.name
+        if n then E.rounds[n] = (E.rounds[n] or 0) + 1 end
+    end
 end
+ENGAGE_HOW = {[1] = 'swing', [3] = 'WS', [4] = 'spell', [6] = 'JA', [8] = 'casting'}
 -- the other real players in the party (no Trusts), same zone, within 30y
 function party_players()
     local out, party = {}, windower.ffxi.get_party()
@@ -4327,6 +4366,7 @@ pstat_at, pstat_q_at, pstat_ask_at = nil, -100, -100
 function pstat_reset()
     local old = PSTAT
     PSTAT = {land = 0, miss = 0, intr = 0, oor = 0, cant = 0, deaths = 0, errs = 0,
+             oorm = 0, oorw = 0, oord = {},   -- v5.01
              lags = {}, never = 0, why = {}, S = old and old.S or nil, cast_at = old and old.cast_at or -100}
 end
 function rep_reset()
@@ -4453,13 +4493,24 @@ function pstat_line()
     local why = {}
     for k, v in pairs(PSTAT.why) do why[#why + 1] = (k:gsub(' ', '_')) .. ':' .. v end
     table.sort(why)
-    return string.format('aa~g s %s e%s/%d/%d r%s w%d/%d/%d o%d c%d d%d x%d n%d', tostring(_addon and _addon.version or '?'),
+    -- v5.01: + " m<melee>/<ws>/<median y x10>" (older AAs ignore the extra token)
+    local od = {}
+    for i, v in ipairs(PSTAT.oord or {}) do od[i] = v end
+    table.sort(od)
+    local omed = #od > 0 and math.floor(od[math.floor((#od + 1) / 2)] * 10 + 0.5) or 0
+    return string.format('aa~g s %s e%s/%d/%d r%s w%d/%d/%d o%d c%d d%d x%d n%d m%d/%d/%d', tostring(_addon and _addon.version or '?'),
         med and string.format('%.1f', med) or '-', #l, PSTAT.never, (#why > 0) and table.concat(why, ',') or '-',
-        PSTAT.land, PSTAT.miss, PSTAT.intr, PSTAT.oor, PSTAT.cant, PSTAT.deaths, PSTAT.errs, pstat_news())
+        PSTAT.land, PSTAT.miss, PSTAT.intr, PSTAT.oor, PSTAT.cant, PSTAT.deaths, PSTAT.errs, pstat_news(),
+        PSTAT.oorm or 0, PSTAT.oorw or 0, omed)
 end
 function pstat_human(rest)
     local v, e, r, w, o, c, d, x, n = tostring(rest):match('^(%S+) e(%S+) r(%S+) w(%S+) o(%d+) c(%d+) d(%d+) x(%d+) n(%d+)')
     if not v then return tostring(rest) end
+    -- v5.01 (debug 2): out of range split
+    local om, ow, od = tostring(rest):match(' m(%d+)/(%d+)/(%d+)')
+    if om and (debug_level or 0) >= 2 and tonumber(o) > 0 then
+        o = string.format('%s (melee %s / WS %s, median %.1fy)', o, om, ow, tonumber(od) / 10)
+    end
     local med, cnt, nev = e:match('^([^/]+)/(%d+)/(%d+)')
     local wl, wm, wi = w:match('^(%d+)/(%d+)/(%d+)')
     local out = string.format('v%s, engage %s (%s mobs, never %s)', v, (med == '-' or not med) and '-' or (med .. 's'), cnt or '?', nev or '?')
@@ -11820,6 +11871,19 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.01 - More detail in the debug log (level 2 only) (Mark, 2026-11-21:
+        "More detail in the logs is fine, for debug level 2 only"; no
+        movement changes; hot-switch hold unchanged).
+        * ENGAGE-LAG lines: how each member got on the mob (swing / WS /
+          spell / JA / engaged), and for a slow member (over 5s) where they
+          were 3s in: idle / engaged on another mob / engaged on it, and how
+          far from the mob.
+        * MELEE-ROUNDS line per mob: melee rounds (hits and misses) each
+          player put on it while it was the leader's target, and how long --
+          shows lost swings without the others' melee in the chat log.
+        * Members' "out of range" counts split into melee / WS with the
+          median distance, in the PARTY-STATS lines ("m" token on the hidden
+          stats line; older AAs ignore it).
 v5.00 - Faster party engage, hot-switch, targeting, magic bursts, learning
         (Mark, 2026-11-21, after the v4.99 report: "lets build all that").
         * Members (aa fight, ASSIST): fast assist ignored the leader's Provoke
@@ -12412,6 +12476,12 @@ windower.register_event('incoming chunk', function(id, data)
                 oor_msg.id = _t4
                 oor_msg.time = os.clock()
                 if PSTAT then PSTAT.oor = PSTAT.oor + 1 end   -- v4.99
+                -- v5.01: melee (auto-attack) or a WS / ability we just sent, and how far the mob was
+                if PSTAT and PSTAT.oorm then
+                    if os.clock() - (last_ws_time or 0) < 2 then PSTAT.oorw = PSTAT.oorw + 1 else PSTAT.oorm = PSTAT.oorm + 1 end
+                    local _m4 = windower.ffxi.get_mob_by_id(_t4)
+                    if _m4 and _m4.distance and #PSTAT.oord < 60 then PSTAT.oord[#PSTAT.oord + 1] = math.sqrt(_m4.distance) end
+                end
             end
         end
         if _msg == 5 or _msg == 217 or _msg == 219 then
