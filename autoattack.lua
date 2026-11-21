@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.96'
+_addon.version  = '4.97'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -4068,6 +4068,104 @@ function anchor_report(me, d)
     local line = string.format('POSITION: leader %.1fy from the fight spot; %s', d,
         #parts > 0 and table.concat(parts, ', ') or 'no other players')
     if far > 0 or d > 3 then info_msg(line .. ' -- NOT STACKED') else debug_msg(line) end
+end
+-- v4.97: ENGAGE TIMING (leader, PULL mode). Mark, 11-21: "why is it taking
+-- so long for other party members to engage sometimes?" -- only the leader's
+-- box is reachable, so the leader times it: from switching to a new mob until
+-- each party player (not Trusts, same zone) is engaged on that mob
+-- (status 1, target_index = the mob). One ENGAGE-LAG line per mob (log file),
+-- an ENGAGE summary in chat every ENGAGE_SUM_SECS.
+ENGAGE_SUM_SECS = 600
+ENGAGE_GIVEUP   = 60     -- s: still not on it -> "never"
+ENGAGE_LAG   = {mob = 0}
+ENGAGE_STATS = {}        -- [name] = {lags = {...}, never = n}
+engage_sum_at = nil
+local function _eng_players()
+    local out = {}
+    local party = windower.ffxi.get_party()
+    local info = windower.ffxi.get_info()
+    local z = info and info.zone
+    for k = 1, 5 do
+        local m = party and party['p' .. k]
+        if type(m) == 'table' and m.name and m.mob and not m.mob.is_npc and (not m.zone or not z or m.zone == z) then
+            out[#out + 1] = m
+        end
+    end
+    return out
+end
+function engage_lag_flush()
+    local E = ENGAGE_LAG
+    if not E.mob or E.mob == 0 then return end
+    local parts = {}
+    local names = {}
+    for n in pairs(E.seen or {}) do names[#names + 1] = n end
+    table.sort(names)
+    for _, n in ipairs(names) do
+        local st = ENGAGE_STATS[n] or {lags = {}, never = 0}
+        ENGAGE_STATS[n] = st
+        local lag = E.got[n]
+        if lag then
+            parts[#parts + 1] = string.format('%s %.1fs', n, lag)
+            st.lags[#st.lags + 1] = lag
+        else
+            parts[#parts + 1] = n .. ' never'
+            st.never = st.never + 1
+        end
+    end
+    if #parts > 0 then
+        debug_msg('ENGAGE-LAG: ' .. tostring(E.name) .. ' -- ' .. table.concat(parts, ', ') .. '.')
+    end
+    ENGAGE_LAG = {mob = 0}
+end
+function engage_summary()
+    local names, parts = {}, {}
+    for n in pairs(ENGAGE_STATS) do names[#names + 1] = n end
+    table.sort(names)
+    for _, n in ipairs(names) do
+        local st = ENGAGE_STATS[n]
+        local l = st.lags
+        table.sort(l)
+        if #l > 0 or st.never > 0 then
+            local med = #l > 0 and l[math.floor((#l + 1) / 2)] or nil
+            local p90 = #l > 0 and l[math.max(1, math.ceil(#l * 0.9))] or nil
+            parts[#parts + 1] = string.format('%s %s (slowest 10%%: %s, never %d of %d)', n,
+                med and string.format('%.1fs', med) or '-', p90 and string.format('%.1fs', p90) or '-',
+                st.never, #l + st.never)
+        end
+    end
+    if #parts > 0 then
+        info_msg('ENGAGE (last ' .. math.floor(ENGAGE_SUM_SECS / 60) .. ' min, median time to engage the leader\'s mob): ' ..
+                 table.concat(parts, '; ') .. '.')
+    end
+    ENGAGE_STATS = {}
+end
+function engage_lag_tick()
+    local now = os.clock()
+    engage_sum_at = engage_sum_at or now
+    if now - engage_sum_at >= ENGAGE_SUM_SECS then engage_sum_at = now; engage_summary() end
+    if not auto_attack or autoattack_type ~= 'pull' then return end
+    local p = windower.ffxi.get_player()
+    local t = windower.ffxi.get_mob_by_target('t')
+    if not p or p.status ~= 1 or not t or not t.id or not t.index or (t.hpp or 0) <= 0 then return end
+    local E = ENGAGE_LAG
+    if E.mob ~= t.id then
+        engage_lag_flush()
+        E = {mob = t.id, idx = t.index, name = t.name, t0 = now, got = {}, seen = {}, done = false}
+        ENGAGE_LAG = E
+    end
+    if E.done then return end
+    local waiting = 0
+    for _, m in ipairs(_eng_players()) do
+        E.seen[m.name] = true
+        if not E.got[m.name] then
+            if m.mob.status == 1 and m.mob.target_index == E.idx then
+                E.got[m.name] = now - E.t0
+            else
+                waiting = waiting + 1
+            end
+        end
+    end
+    if waiting == 0 or now - E.t0 > ENGAGE_GIVEUP then E.done = true end
 end
 function aa_set_anchor()
     local me = windower.ffxi.get_mob_by_target('me')
@@ -8091,6 +8189,7 @@ function main_logic_loop(my_gen)
         ds_restore_check()  -- v4.36: after-Dread-Spikes gear that didn't go back on
         step_home_check()   -- v4.37: back to the pre-STEP-IN spot once engaged
         anchor_check()      -- v4.75: leader back on the aa fight spot
+        pcall(engage_lag_tick)   -- v4.97: how long the party takes to engage our mob
 
         --Configure pull type and range
         local pull_command = '/ra <t>'
@@ -11012,6 +11111,14 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.97 - Engage timing from the leader (Mark, 2026-11-21: "why is it taking so
+        long for other party members to engage sometimes? ... add the log from
+        Shadow, because I don't have the boxes for the others"). In PULL mode
+        the leader times, for every new mob, how long each party player (not
+        Trusts, same zone) takes to be engaged on that same mob: one
+        "ENGAGE-LAG: <mob> -- Mythrandiir 3.2s, Vayne never" line per mob
+        (log file) and an "ENGAGE (last 10 min ...)" summary in chat every 10
+        minutes: median, slowest 10%, and how many mobs they never engaged.
 v4.96 - A player at the TP cap opens first (Mark, 2026-11-21: "are there
         any other changes needed to improve efficiency? is the GSC tracking and
         usage plans working?"). Tracking and plans work (profiles, knowledge,
