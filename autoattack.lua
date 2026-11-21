@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.98'
+_addon.version  = '4.99'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -1050,9 +1050,10 @@ function aa_log_file(line)
     aa_dbg_file:flush()  -- every line, so a client crash still leaves the last lines on disk
 end
 function aa_log(lvl, msg)
+    msg = tostring(msg)
+    if pstat_count_err then pcall(pstat_count_err, msg) end   -- v4.99: errors go to the party report
     local dl = debug_level or 0
     if dl < lvl then return end
-    msg = tostring(msg)
     if dl >= 2 then
         local now = os.clock()
         local d = (aa_dbg_last > 0) and (now - aa_dbg_last) or 0
@@ -4079,6 +4080,8 @@ ENGAGE_SUM_SECS = 600
 ENGAGE_GIVEUP   = 60     -- s: still not on it -> "never"
 ENGAGE_LAG   = {mob = 0}
 ENGAGE_STATS = {}        -- [name] = {lags = {...}, never = n}
+ENGAGE_SLOW, ENGAGE_SLOW_AWAY = 0, 0   -- v4.99: slow mobs / of them still on the way in
+ENGAGE_AWAY = 6         -- v4.99: y from the leader = still on its way in
 engage_sum_at = nil
 local function _eng_players()
     local out = {}
@@ -4113,7 +4116,15 @@ function engage_lag_flush()
         end
     end
     if #parts > 0 then
-        debug_msg('ENGAGE-LAG: ' .. tostring(E.name) .. ' -- ' .. table.concat(parts, ', ') .. '.')
+        -- v4.99: slow because the mob was still flying / walking in?
+        local _slow = false
+        for _, n in ipairs(names) do if not E.got[n] or E.got[n] > PSTAT_SLOW then _slow = true end end
+        if _slow then
+            ENGAGE_SLOW = ENGAGE_SLOW + 1
+            if (E.away or 0) > ENGAGE_AWAY then ENGAGE_SLOW_AWAY = ENGAGE_SLOW_AWAY + 1 end
+        end
+        debug_msg('ENGAGE-LAG: ' .. tostring(E.name) .. ' -- ' .. table.concat(parts, ', ') ..
+                  string.format(' (mob %.1fy from us when picked)', E.away or 0) .. '.')
     end
     ENGAGE_LAG = {mob = 0}
 end
@@ -4135,9 +4146,12 @@ function engage_summary()
     end
     if #parts > 0 then
         info_msg('ENGAGE (last ' .. math.floor(ENGAGE_SUM_SECS / 60) .. ' min, median time to engage the leader\'s mob): ' ..
-                 table.concat(parts, '; ') .. '.')
+                 table.concat(parts, '; ') .. '.' ..
+                 ((ENGAGE_SLOW > 0) and string.format(' Slow mobs (over %ds): %d, %d of them still %dy+ away when picked.',
+                     PSTAT_SLOW, ENGAGE_SLOW, ENGAGE_SLOW_AWAY, ENGAGE_AWAY) or ''))
     end
     ENGAGE_STATS = {}
+    ENGAGE_SLOW, ENGAGE_SLOW_AWAY = 0, 0
 end
 function engage_lag_tick()
     local now = os.clock()
@@ -4150,7 +4164,8 @@ function engage_lag_tick()
     local E = ENGAGE_LAG
     if E.mob ~= t.id then
         engage_lag_flush()
-        E = {mob = t.id, idx = t.index, name = t.name, t0 = now, got = {}, seen = {}, done = false}
+        E = {mob = t.id, idx = t.index, name = t.name, t0 = now, got = {}, seen = {}, done = false,
+             away = t.distance and math.sqrt(t.distance) or 0}   -- v4.99: how far the mob was when picked
         ENGAGE_LAG = E
     end
     if E.done then return end
@@ -4166,6 +4181,250 @@ function engage_lag_tick()
         end
     end
     if waiting == 0 or now - E.t0 > ENGAGE_GIVEUP then E.done = true end
+end
+-- v4.99: PARTY STATS / EVENTS / REPORT (Mark, 2026-11-21: the other PCs' log
+-- files can't be had, so "use party chat to send updates from the other clients
+-- over to shadowhammer and vice versa"). Each AA tells the party, in hidden
+-- aa~g lines, what only its own client sees:
+--   "aa~g s ..." every PSTAT_SECS (and when asked): its own engage time after the
+--      party leader picks a mob (and why, when slower than PSTAT_SLOW), WS landed /
+--      missed / interrupted, "out of range" and "can't see" messages, deaths,
+--      errors, version, learned samples not yet in the master.
+--   "aa~g e <kind> <text>" right away: death, error, watchdog restart.
+--   "aa~g q" = send your stats now (//aa report).
+-- The leader (PULL mode) writes a PARTY REPORT every PSTAT_SECS from what its own
+-- client sees of everyone (WS, skillchains, magic bursts, kills) plus the
+-- members' lines. Globals on purpose (main chunk is at the local limit).
+PSTAT_SECS = 600
+PSTAT_SLOW = 5
+PSTAT, REP = nil, nil
+PSTAT_PEER = {}          -- [name] = {t = os.clock(), line = "<version> e.. r.. w.."}
+PSTAT_EV_AT = {}         -- [kind] = os.clock() of the last event sent
+PSTAT_EV_GAP = {death = 30, error = 300, watchdog = 60}
+pstat_at, pstat_q_at, pstat_ask_at = nil, -100, -100
+function pstat_reset()
+    local old = PSTAT
+    PSTAT = {land = 0, miss = 0, intr = 0, oor = 0, cant = 0, deaths = 0, errs = 0,
+             lags = {}, never = 0, why = {}, S = old and old.S or nil, cast_at = old and old.cast_at or -100}
+end
+function rep_reset()
+    REP = {t0 = os.clock(), kills = 0, hit = {}, ws = {}, sc = {}, mb = 0, closed = 0, wsn = 0}
+end
+pstat_reset(); rep_reset()
+-- an error from a pcall ("X error: ..." / "X failed: ...") -> counted + one event per 5 min
+function pstat_count_err(msg)
+    if not PSTAT or msg:find('^PARTY%-') then return end
+    local low = msg:lower()
+    if low:find(' error: ', 1, true) or low:find('failed: ', 1, true) then
+        PSTAT.errs = PSTAT.errs + 1
+        pstat_event('error', msg:sub(1, 90))
+    end
+end
+-- what the leader's client sees of the party (and our own WS / casts)
+function pstat_on_action(act)
+    if not act or not act.actor_id or type(act.targets) ~= 'table' or not PSTAT then return end
+    local cat, pl = act.category, windower.ffxi.get_player()
+    if not pl then return end
+    local me = act.actor_id == pl.id
+    if me and cat == 8 then PSTAT.cast_at = os.clock() end
+    if me and cat == 7 and act.param == 28787 then PSTAT.intr = PSTAT.intr + 1 end
+    local t1 = act.targets[1]
+    local a1 = t1 and type(t1.actions) == 'table' and t1.actions[1]
+    if not t1 or not a1 or not gsc_party_ids()[act.actor_id] then return end
+    if (cat == 1 or cat == 3 or cat == 4) and t1.id and t1.id ~= act.actor_id then REP.hit[t1.id] = true end
+    if cat == 3 and GSC_WS_MSG[a1.message] then
+        if me then
+            if a1.message == 188 then PSTAT.miss = PSTAT.miss + 1 else PSTAT.land = PSTAT.land + 1 end
+        end
+        local who, r = gsc_player_name(act.actor_id), res.weapon_skills[act.param]
+        if who and r and r.en then
+            local k = who .. '|' .. r.en
+            local e = REP.ws[k] or {n = 0, s = 0, who = who, ws = r.en}
+            REP.ws[k] = e
+            e.n = e.n + 1
+            if a1.message ~= 188 then e.s = e.s + (tonumber(a1.param) or 0) end
+            REP.wsn = REP.wsn + 1
+        end
+        local sc = a1.has_add_effect and GSC_SC_MSG[a1.add_effect_message]
+        if sc then
+            local e = REP.sc[sc] or {n = 0, s = 0}
+            REP.sc[sc] = e
+            e.n, e.s = e.n + 1, e.s + (tonumber(a1.add_effect_param) or 0)
+            REP.closed = REP.closed + 1
+        end
+    elseif cat == 4 and a1.message == 252 then
+        REP.mb = REP.mb + 1
+    end
+end
+function pstat_kill(dead_id)
+    if REP and dead_id and REP.hit[dead_id] then REP.kills = REP.kills + 1; REP.hit[dead_id] = nil end
+end
+-- the party leader's mob (nil when we are the leader / no party)
+function pstat_leader()
+    local party, pl = windower.ffxi.get_party(), windower.ffxi.get_player()
+    local lid = party and party.party1_leader
+    if not lid or not pl or lid == pl.id then return nil end
+    return windower.ffxi.get_mob_by_id(lid)
+end
+function pstat_tick()
+    local now = os.clock()
+    pstat_at = pstat_at or now
+    if now - pstat_at >= PSTAT_SECS then
+        pstat_at = now
+        if autoattack_type == 'pull' then pcall(rep_print, false) end
+        pstat_send('every ' .. math.floor(PSTAT_SECS / 60) .. ' min', 1 + gsc_slot() * 1.5, true)
+    end
+    local lm, pl = pstat_leader(), windower.ffxi.get_player()
+    if not lm or not pl or not PSTAT then return end
+    local S = PSTAT.S
+    if lm.status == 1 and (lm.target_index or 0) > 0 and (not S or S.idx ~= lm.target_index) then
+        local mob = windower.ffxi.get_mob_by_index(lm.target_index)
+        if mob and (mob.hpp or 0) > 0 then
+            if S and not S.done then PSTAT.never = PSTAT.never + 1 end   -- the leader moved on first
+            -- why we may be slow, as things stand when the leader picks it
+            local mt, why = windower.ffxi.get_mob_by_target('t'), 'other'
+            if pl.vitals and pl.vitals.hp == 0 then why = 'dead'
+            elseif pl.status == 1 and mt and mt.index ~= lm.target_index and (mt.hpp or 0) > 0 then why = 'other mob'
+            elseif now - PSTAT.cast_at < 3 then why = 'casting'
+            elseif lm.x and mob.x and math.sqrt((lm.x - mob.x) ^ 2 + (lm.y - mob.y) ^ 2) > ENGAGE_AWAY then why = 'mob coming'
+            elseif mob.distance and math.sqrt(mob.distance) > 20 then why = 'far'
+            elseif not auto_attack then why = 'AA off' end
+            PSTAT.S = {idx = lm.target_index, t0 = now, why = why, done = false}
+            S = PSTAT.S
+        end
+    end
+    if S and not S.done then
+        local mt = windower.ffxi.get_mob_by_target('t')
+        if pl.status == 1 and mt and mt.index == S.idx then
+            local lag = now - S.t0
+            S.done = true
+            PSTAT.lags[#PSTAT.lags + 1] = lag
+            if lag > PSTAT_SLOW then PSTAT.why[S.why] = (PSTAT.why[S.why] or 0) + 1 end
+        elseif now - S.t0 > ENGAGE_GIVEUP then
+            S.done = true
+            PSTAT.never = PSTAT.never + 1
+            PSTAT.why[S.why] = (PSTAT.why[S.why] or 0) + 1
+        end
+    end
+end
+function pstat_news()
+    local n = 0
+    if not GSC_KO then return 0 end
+    for _, kind in ipairs(GSC_KINDS_SYNC) do
+        for who, tw in pairs(GSC_KO[kind]) do
+            for key in pairs(tw) do n = n + (gsc_k_delta(kind, who, key)) end
+        end
+    end
+    return n
+end
+-- "aa~g s 4.99 e5.2/12/0 rmob_coming:2 w31/0/1 o4 c2 d0 x0 n120"
+function pstat_line()
+    local l = {}
+    for i, v in ipairs(PSTAT.lags) do l[i] = v end
+    table.sort(l)
+    local med = #l > 0 and l[math.floor((#l + 1) / 2)] or nil
+    local why = {}
+    for k, v in pairs(PSTAT.why) do why[#why + 1] = (k:gsub(' ', '_')) .. ':' .. v end
+    table.sort(why)
+    return string.format('aa~g s %s e%s/%d/%d r%s w%d/%d/%d o%d c%d d%d x%d n%d', tostring(_addon and _addon.version or '?'),
+        med and string.format('%.1f', med) or '-', #l, PSTAT.never, (#why > 0) and table.concat(why, ',') or '-',
+        PSTAT.land, PSTAT.miss, PSTAT.intr, PSTAT.oor, PSTAT.cant, PSTAT.deaths, PSTAT.errs, pstat_news())
+end
+function pstat_human(rest)
+    local v, e, r, w, o, c, d, x, n = tostring(rest):match('^(%S+) e(%S+) r(%S+) w(%S+) o(%d+) c(%d+) d(%d+) x(%d+) n(%d+)')
+    if not v then return tostring(rest) end
+    local med, cnt, nev = e:match('^([^/]+)/(%d+)/(%d+)')
+    local wl, wm, wi = w:match('^(%d+)/(%d+)/(%d+)')
+    local out = string.format('v%s, engage %s (%s mobs, never %s)', v, (med == '-' or not med) and '-' or (med .. 's'), cnt or '?', nev or '?')
+    if r ~= '-' then out = out .. ', slow: ' .. r:gsub('_', ' '):gsub(':', ' x'):gsub(',', ', ') end
+    return out .. string.format(', WS %s landed / %s missed / %s interrupted, out of range %s, can\'t see %s, deaths %s, errors %s, %s learned not in the master yet',
+        tostring(wl), tostring(wm), tostring(wi), o, c, d, x, n)
+end
+function pstat_send(why, delay, reset)
+    if not PSTAT then return end
+    if not gsc_has_players() then if reset then pstat_reset() end return end
+    local line = pstat_line()
+    if reset then pstat_reset() end
+    coroutine.schedule(function() pcall(gsc_party_line, line) end, delay or 0)
+    debug_msg('PARTY-STATS sent (' .. tostring(why) .. '): ' .. pstat_human(line:sub(8)))
+end
+function pstat_event(kind, text)
+    local now = os.clock()
+    if now - (PSTAT_EV_AT[kind] or -1e9) < (PSTAT_EV_GAP[kind] or 60) then return end
+    PSTAT_EV_AT[kind] = now
+    if not gsc_has_players() then return end
+    local line = ('aa~g e ' .. tostring(kind) .. ' ' .. tostring(text or '')):gsub('%c', ' '):sub(1, 110)
+    coroutine.schedule(function() pcall(gsc_party_line, line) end, 0.5)
+end
+function pstat_on_stats(sender, rest)
+    PSTAT_PEER[sender] = {t = os.clock(), line = rest}
+    debug_msg('PARTY-STATS ' .. sender .. ': ' .. pstat_human(rest) .. '.')
+end
+function pstat_on_event(sender, rest)
+    local kind, text = tostring(rest):match('^(%S+)%s*(.*)$')
+    info_msg('PARTY-EVENT ' .. tostring(sender) .. ': ' .. tostring(kind) .. ((text and text ~= '') and (' -- ' .. text) or '') .. '.')
+end
+function pstat_on_query(sender)
+    local now = os.clock()
+    if now - pstat_q_at < 20 then return end
+    pstat_q_at = now
+    pstat_send('asked by ' .. tostring(sender), 1 + gsc_slot() * 1.5, false)
+end
+-- //aa report: ask the party for their stats, print the report ~10s later
+function pstat_report()
+    local now = os.clock()
+    if gsc_has_players() and now - pstat_ask_at > 5 then
+        pstat_ask_at = now
+        pstat_q_at = now   -- we answer our own question with the report itself
+        coroutine.schedule(function() pcall(gsc_party_line, 'aa~g q') end, 0.3)
+    end
+    windower.add_to_chat(8, '[AutoAttack] Party report in about 10 seconds (asking the party for their stats).')
+    coroutine.schedule(function()
+        local ok, err = pcall(rep_print, true)
+        if not ok then windower.add_to_chat(8, '[AutoAttack] report failed -- ' .. tostring(err)) end
+    end, 10)
+end
+function rep_print(asked)
+    if not REP or not PSTAT then return end
+    local now = os.clock()
+    local mins = math.max((now - REP.t0) / 60, 0.1)
+    local L = {}
+    L[#L + 1] = string.format('PARTY REPORT (last %.0f min): %d kills (%.0f/h); %d WS, %d closed a skillchain (%d%%); %d magic bursts.',
+        mins, REP.kills, REP.kills * 60 / mins, REP.wsn, REP.closed,
+        REP.wsn > 0 and math.floor(REP.closed * 100 / REP.wsn + 0.5) or 0, REP.mb)
+    local by, names = {}, {}
+    for _, e in pairs(REP.ws) do
+        if not by[e.who] then by[e.who] = {}; names[#names + 1] = e.who end
+        table.insert(by[e.who], e)
+    end
+    table.sort(names)
+    local parts = {}
+    for _, n in ipairs(names) do
+        table.sort(by[n], function(a, b) return a.n > b.n end)
+        local ws = {}
+        for _, e in ipairs(by[n]) do ws[#ws + 1] = string.format('%s %d x %.1fk', e.ws, e.n, e.s / e.n / 1000) end
+        parts[#parts + 1] = n .. ': ' .. table.concat(ws, ', ')
+    end
+    if #parts > 0 then L[#L + 1] = 'PARTY REPORT WS -- ' .. table.concat(parts, ' | ') .. '.' end
+    local sc = {}
+    for k, e in pairs(REP.sc) do sc[#sc + 1] = {k = k, n = e.n, a = e.s / e.n / 1000} end
+    table.sort(sc, function(a, b) return a.n > b.n end)
+    local sp = {}
+    for _, e in ipairs(sc) do sp[#sp + 1] = string.format('%s %d x %.1fk', e.k, e.n, e.a) end
+    if #sp > 0 then L[#L + 1] = 'PARTY REPORT skillchains -- ' .. table.concat(sp, ', ') .. '.' end
+    local pl = windower.ffxi.get_player()
+    if pl then L[#L + 1] = 'PARTY REPORT ' .. pl.name .. ' (this PC) -- ' .. pstat_human(pstat_line():sub(8)) .. '.' end
+    local mn = {}
+    for n in pairs(PSTAT_PEER) do mn[#mn + 1] = n end
+    table.sort(mn)
+    for _, n in ipairs(mn) do
+        local p = PSTAT_PEER[n]
+        if now - p.t < PSTAT_SECS + 60 then
+            L[#L + 1] = string.format('PARTY REPORT %s (%ds ago) -- %s.', n, math.floor(now - p.t), pstat_human(p.line))
+        end
+    end
+    for _, l in ipairs(L) do info_msg(l) end
+    if not asked then rep_reset() end
 end
 function aa_set_anchor()
     local me = windower.ffxi.get_mob_by_target('me')
@@ -4346,6 +4605,8 @@ function aa_on_defeated(how, killer_id)
         local k = windower.ffxi.get_mob_by_id(killer_id)
         if k and k.name then who = ' by ' .. k.name end
     end
+    if PSTAT then PSTAT.deaths = PSTAT.deaths + 1 end   -- v4.99: tell the party
+    if pstat_event then pcall(pstat_event, 'death', 'defeated' .. who) end
     local was_on = auto_attack
     auto_attack = false
     fight_subcmd = nil
@@ -5718,12 +5979,15 @@ function gsc_command(arg)
         gsc_sync_start('aa gsc sync', 0.5 + gsc_slot() * 1.5)
         windower.add_to_chat(8, '[AutoAttack] Group skillchain: comparing learned damage with the party.')
         return
+    elseif a == 'report' or a == 'r' then   -- v4.99
+        pstat_report()
+        return
     elseif a == 'save' then
         GSC_KS.dirty = true; gsc_k_save()
         windower.add_to_chat(8, '[AutoAttack] Group skillchain: learning saved to ' .. gsc_k_path(GSC_KS.char or '?'))
         return
     elseif a then
-        windower.add_to_chat(8, '[AutoAttack] Usage: //aa gsc [on|off|auto|?|k|sync|save]')
+        windower.add_to_chat(8, '[AutoAttack] Usage: //aa gsc [on|off|auto|?|k|sync|save|report]')
         return
     end
     local mem, n = gsc_members()
@@ -6487,11 +6751,37 @@ function gsc_send_entries(who)
         end
     end
     table.sort(items)
+    -- v4.99: per mob type too: "@Locus_Dire_Bat 93W12:16.20 94S9:27.70" (W = wsm,
+    -- S = scm). Older AAs skip both kinds of token.
+    local mobs = {}
+    for _, kind in ipairs({'wsm', 'scm'}) do
+        for key, e in pairs(GSC_K[kind][who] or {}) do
+            local ws, mob = key:match('^(.-)@(.+)$')
+            local id = ws and gsc_ws_id(ws)
+            if id and not mob:find('_', 1, true) then
+                local tag = '@' .. (mob:gsub(' ', '_'))
+                mobs[tag] = mobs[tag] or {}
+                table.insert(mobs[tag], string.format('%d%s%d:%.2f', id, (kind == 'wsm') and 'W' or 'S', e.n, e.a))
+            end
+        end
+    end
+    local tags = {}
+    for tag, l in pairs(mobs) do table.sort(l); tags[#tags + 1] = tag end
+    table.sort(tags)
     local head = 'aa~g k ' .. who
-    local line, n = head, 0
-    for _, it in ipairs(items) do
-        if #line + 1 + #it > 110 then gsc_party_line(line); n = n + 1; line = head end
-        line = line .. ' ' .. it
+    local line, n, cur = head, 0, nil
+    local function put(it, tag)
+        local pre = (tag and tag ~= cur) and (tag .. ' ') or ''
+        if #line + 1 + #pre + #it > 110 then
+            gsc_party_line(line); n = n + 1; line = head; cur = nil
+            pre = tag and (tag .. ' ') or ''
+        end
+        line = line .. ' ' .. pre .. it
+        if tag then cur = tag end
+    end
+    for _, it in ipairs(items) do put(it, nil) end
+    for _, tag in ipairs(tags) do
+        for _, it in ipairs(mobs[tag]) do put(it, tag); items[#items + 1] = it end
     end
     if line ~= head then gsc_party_line(line); n = n + 1 end
     debug_msg('GSC: sent ' .. #items .. ' learned entries for ' .. who .. ' (' .. n .. ' party lines).')
@@ -6500,10 +6790,17 @@ function gsc_on_entries(sender, rest)
     local who, body = rest:match('^(%a+)%s+(.*)$')
     if not who then return end
     gsc_k_ensure()
-    local src = {ws = {[who] = {}}, sc = {[who] = {}}, mb = {[who] = {}}}
-    for id, c, n, a in body:gmatch('(%d+)([wsm])(%d+):([%d%.]+)') do
-        local key = (c == 'm') and 'MB' or gsc_ws_name(tonumber(id))
-        if key then src[GSC_KKIND[c]][who][key] = {n = tonumber(n), a = tonumber(a), t = 0} end
+    local src = {ws = {[who] = {}}, sc = {[who] = {}}, mb = {[who] = {}}, wsm = {[who] = {}}, scm = {[who] = {}}}
+    local mob
+    for tok in body:gmatch('%S+') do
+        if tok:sub(1, 1) == '@' then mob = tok:sub(2):gsub('_', ' ')   -- v4.99: per mob type
+        else
+            local id, c, n, a = tok:match('^(%d+)([wsmWS])(%d+):([%d%.]+)$')
+            local key = id and ((c == 'm') and 'MB' or gsc_ws_name(tonumber(id)))
+            if key and (c == 'W' or c == 'S') then
+                if mob then src[(c == 'W') and 'wsm' or 'scm'][who][key .. '@' .. mob] = {n = tonumber(n), a = tonumber(a), t = 0} end
+            elseif key then src[GSC_KKIND[c]][who][key] = {n = tonumber(n), a = tonumber(a), t = 0} end
+        end
     end
     local ch = gsc_k_merge(GSC_KB, src)   -- v4.98: into the base (and kept for the release)
     gsc_k_merge(GSC_KP, src)
@@ -6520,7 +6817,10 @@ function gsc_proto(sender, text)
     verb = verb:lower()
     if verb == 'p' then gsc_on_profile(sender, rest)
     elseif verb == 'd' then gsc_on_digest(sender, rest)
-    elseif verb == 'k' then gsc_on_entries(sender, rest) end
+    elseif verb == 'k' then gsc_on_entries(sender, rest)
+    elseif verb == 's' then pstat_on_stats(sender, rest)   -- v4.99
+    elseif verb == 'e' then pstat_on_event(sender, rest)
+    elseif verb == 'q' then pstat_on_query(sender) end
 end
 -- aa_party.lua calls these (each AA waits by its place in the party: 1.5s apart)
 function gsc_on_fight()
@@ -8397,6 +8697,7 @@ function main_logic_loop(my_gen)
         step_home_check()   -- v4.37: back to the pre-STEP-IN spot once engaged
         anchor_check()      -- v4.75: leader back on the aa fight spot
         pcall(engage_lag_tick)   -- v4.97: how long the party takes to engage our mob
+        pcall(pstat_tick)        -- v4.99: own engage timing, stats line, party report
 
         --Configure pull type and range
         local pull_command = '/ra <t>'
@@ -11318,6 +11619,28 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.99 - Party stats, events and report over party chat (Mark, 2026-11-21:
+        "we won't be able to consistently get the actual physical log files
+        from the other computers ... use party chat to send updates from the
+        other clients over to shadowhammer and vice versa").
+        * Every AA sends a hidden "aa~g s" line every 10 minutes: its own
+          engage time after the party leader picks a mob, with why when it
+          took over 5s (other mob, casting, mob coming, far, dead, AA off),
+          WS landed / missed / interrupted, out of range and can't see
+          messages, deaths, errors and learned samples not yet in the master.
+        * "aa~g e" right away for a death, an error ("... error: " /
+          "... failed: " lines) or a watchdog restart -- shown and logged on
+          every other AA as "PARTY-EVENT <name>: ...".
+        * The leader (PULL mode) writes a PARTY REPORT every 10 minutes from
+          what its own client sees -- kills per hour, every player's WS (count
+          x average), skillchains by type, how many WS closed one, magic
+          bursts -- plus each member's stats line. //aa report (or
+          //aa gsc report, /p aa gsc report) asks everyone now and prints it.
+        * The leader's ENGAGE-LAG lines say how far the mob was when picked;
+          the 10-minute summary counts slow mobs that were still 6y+ away
+          (the overnight slow ones looked like bats still flying in).
+        * Knowledge sync carries the per-mob-type figures too ("@Mob_Name"
+          then 93W12:16.20 / 94S9:27.70); v4.98 AAs ignore those tokens.
 v4.98 - Group skillchain learning, step 1 (Mark, 2026-11-21: "review AA/GSC/WS
         efficiency ... better ways to update dmg data / knowledge?").
         * Vayne's Weapon Bash (DRK job ability) arrives as a category 3 action
@@ -11722,6 +12045,7 @@ local function handle_cant_see(is_facing_msg)
     local p = windower.ffxi.get_player()
     if auto_attack and p and p.status == 1 then
         cant_see_flag = true
+        if PSTAT then PSTAT.cant = PSTAT.cant + 1 end   -- v4.99
         local _mt = windower.ffxi.get_mob_by_target('t')   -- v4.38: STEP-IN trouble
         if _mt and _mt.id then
             melee_msg.id = _mt.id; melee_msg.time = os.clock()
@@ -11831,6 +12155,7 @@ windower.register_event('incoming chunk', function(id, data)
             local _dt = data:byte(9) + data:byte(10) * 256 + data:byte(11) * 65536 + data:byte(12) * 16777216
             cant_see_strikes[_dt] = nil; cant_see_strike_time[_dt] = nil
             aa_kill_seen(_dt)  -- v4.19
+            if pstat_kill then pcall(pstat_kill, _dt) end   -- v4.99: party report
             if mob_hits then mob_hits[_dt] = nil end
             if ds_mobs then ds_mobs[_dt] = nil end  -- v4.32
             -- v4.34: was it us? (msg 97 = "<you> were defeated by <mob>")
@@ -11852,6 +12177,7 @@ windower.register_event('incoming chunk', function(id, data)
             if _me4 and _a4 == _me4.id then
                 oor_msg.id = _t4
                 oor_msg.time = os.clock()
+                if PSTAT then PSTAT.oor = PSTAT.oor + 1 end   -- v4.99
             end
         end
         if _msg == 5 or _msg == 217 or _msg == 219 then
@@ -12120,6 +12446,8 @@ function aa_addon_command(command, ...)
             _m == 'fix' and ' Ghost slot fix (/retr all + call Trusts) on the next idle tick.' or ''))
     elseif command == 'gsc' then
         gsc_command(subcmd)   -- v4.70: //aa gsc [on|off|auto]
+    elseif command == 'report' then
+        pstat_report()        -- v4.99: party report now
     elseif command == 'ws' then
         -- v4.33: //aa ws [off|on] -- no argument shows the current state
         local _m = subcmd and subcmd:lower()
@@ -12141,7 +12469,7 @@ function aa_addon_command(command, ...)
         if command ~= 'help' then
             windower.add_to_chat(8, '[AutoAttack] Unknown command: ' .. tostring(command))
         end
-        windower.add_to_chat(8, '[AutoAttack] v' .. _addon.version .. ' -- //aa assist | pull [n|s|e|w|...] | stop | move [off|pull|provoke|melee|target|n] | debug [0|1|2] | target [packet|native] | rings [reset] | ds [clear] | ws [off|on] | gsc [on|off|auto|?|k|sync] | fullparty [on|off|fix] | dumpinv | id | pet')
+        windower.add_to_chat(8, '[AutoAttack] v' .. _addon.version .. ' -- //aa assist | pull [n|s|e|w|...] | stop | move [off|pull|provoke|melee|target|n] | debug [0|1|2] | target [packet|native] | rings [reset] | ds [clear] | ws [off|on] | gsc [on|off|auto|?|k|sync|report] | report | fullparty [on|off|fix] | dumpinv | id | pet')
         windower.add_to_chat(8, '[AutoAttack] party: //aa invite me|<name> [sync <n>] [leader <n>] [fight] | fight | stop | stack | follow [n] | unfollow | cancel | disband | leave | leader <n> | sync <n> | unsync | trusts [grp] | retr | retrust | rest | mount [n] | dismount | pass | lot | sneak | invis | warp | status | ping | party')
     end
 end
@@ -12269,6 +12597,7 @@ windower.register_event('prerender', function()
     windower.add_to_chat(167, string.format('[AutoAttack] WATCHDOG: main loop silent for %ds ' ..
         '(likely a Lua error -- see Windower console). Restarting (%d in last 30 min).',
         math.floor(stalled), #recent))
+    if pstat_event then pcall(pstat_event, 'watchdog', 'main loop restarted after ' .. math.floor(stalled) .. 's silent') end   -- v4.99
     start_main_loop()
 end)
 
@@ -12281,6 +12610,7 @@ windower.register_event('action', function(action)
     local _cat = action.category
     ds_on_action(action)  -- v4.32: Dread Spikes tracking
     gsc_on_action(action) -- v4.70: group skillchain
+    pcall(pstat_on_action, action)   -- v4.99: party report
 
     -- v3.87: Provoke confirmation for provoke_fire_confirmed()
     if _cat == 6 and provoke_pending.active and provoke_pending.ja_id

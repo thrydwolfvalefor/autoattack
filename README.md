@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.98** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.99** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -560,7 +560,12 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
   * The plan uses learned damage first (that player's, then the party's, after `learn_min` samples), then the built-in figures. Each skillchain also counts the fillers' learned magic burst x `mb_weight`.
 * **Sharing.** On `aa fight` and when a player joins, every AutoAttack posts a short digest (`aa~g d`). Whoever knows the most about a player sends those entries (`aa~g k`), and the others take any entry with more samples than theirs.
 * **Master file.** When a release is built on MarksPC, `make_release.py` adds the new samples of every `data/aa_learned_*.lua` (and the entries teammates sent) to `aa_knowledge.lua`, records what it took, and ships it; `aa update` downloads it (`extra=` in `manifest.txt`).
-* `//aa gsc` marks players whose profile it has with `(profile)`. `//aa gsc k` lists what is learned for the party, `//aa gsc sync` compares now, `//aa gsc save` writes the learning file, `//aa gsc ?` (or `/p aa gsc ?`) re-sends profiles.
+* **Party stats and report (v4.99).** Only Shadow's log files can be reached, so every AutoAttack reports over hidden party lines:
+  * `aa~g s` every 10 minutes: its own engage time after the party leader picks a mob (and why, when over 5s: other mob, casting, mob coming, far, dead, AA off), WS landed / missed / interrupted, out of range and can't see messages, deaths, errors, learned samples not yet in the master.
+  * `aa~g e` right away for a death, an error or a watchdog restart. Every other AutoAttack shows and logs it as `PARTY-EVENT <name>: ...`.
+  * The leader (PULL mode) writes a `PARTY REPORT` every 10 minutes from what its own game sees (kills per hour, each player's WS, skillchains by type, WS that closed one, magic bursts) plus each member's line. `//aa report` (or `/p aa gsc report`) asks everyone now and prints it after about 10 seconds.
+  * The knowledge sync also carries the per-mob-type figures.
+* `//aa gsc` marks players whose profile it has with `(profile)`. `//aa gsc k` lists what is learned for the party, `//aa gsc sync` compares now, `//aa gsc save` writes the learning file, `//aa gsc report` / `//aa report` prints the party report, `//aa gsc ?` (or `/p aa gsc ?`) re-sends profiles.
 * Settings in `group_skillchain`: `announce`, `learn`, `sync` (all true), `learn_min` 3, `learn_window` 60, `mob_k` 5, `odd_min` 20, `odd_ratio` 0.25, `odd_repeat` 3, `pool_max` 6, `weapon_hold` 3, `mb_weight` 0.5, `sync_min` 5.
 
 ### `ring_config`
