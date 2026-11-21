@@ -2002,6 +2002,8 @@ windower.register_event('chat message', function(message, sender, mode, gm)
     if low:find('^aa~') then
         -- v4.90: group skillchain profiles / learned damage from a party member
         if mode == 4 and low:find('^aa~g%s') then
+            local _k = sender .. '|' .. text                  -- v4.91: taken from the packet already?
+            if P.gsc_took and P.gsc_took[_k] and os.clock() - P.gsc_took[_k] < 5 then return end
             if member(sender) and gsc_proto then
                 local ok, err = pcall(gsc_proto, sender, text)
                 if not ok then dbg('aa~g from ' .. sender .. ' failed: ' .. tostring(err)) end
@@ -2232,6 +2234,29 @@ do
         end
     end
 end
+
+-- v4.91: a teammate's "aa~g" party line is dropped as a packet (0x017), so the
+-- game never prints it. v4.90 hid them with 'incoming text', which worked for
+-- your own lines but not for teammates' (Mark, 11-20 23:52: Myth's and
+-- Scrach's "aa~g p ..." showed in Shadow's chat). The line is handled here.
+P.gsc_took = P.gsc_took or {}
+windower.register_event('incoming chunk', function(id, data)
+    if id ~= 0x017 or not data or #data < 0x18 or data:byte(5) ~= 4 then return end   -- 4 = party
+    local msg = data:sub(0x18):match('^[^%z]*') or ''
+    if not msg:lower():find('^aa~g%s') then return end
+    local name = data:sub(9, 0x17):match('^[%w]+')
+    if name and is_friend(name) and member(name) and gsc_proto then
+        local text = clean(msg)
+        local now = os.clock()
+        for k, t in pairs(P.gsc_took) do if now - t > 10 then P.gsc_took[k] = nil end end
+        P.gsc_took[name .. '|' .. text] = now
+        coroutine.schedule(function()
+            local ok, err = pcall(gsc_proto, name, text)
+            if not ok then dbg('aa~g from ' .. name .. ' failed: ' .. tostring(err)) end
+        end, 0)
+    end
+    return true   -- never shown
+end)
 
 -- v4.90: keep the group skillchain's party lines ("aa~g ...") out of the chat
 -- window -- 13 = a party member's line, 5 = your own (res/chat.lua)

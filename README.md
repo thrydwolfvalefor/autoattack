@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.90** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.91** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -546,7 +546,7 @@ When another player is in the party (`group_skillchain.min_players`, default 2 w
 Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack plans his Rudra's Storm / Evisceration / Exenterator.
 
 * **Skillchain properties** come from Windower's own weapon skill list, so every weapon skill works. The built-in table only corrects it.
-* **Profiles.** Each AutoAttack sends its job, level, weapon and the weapon skills it will use in a hidden party line (`aa~g p ...`, never shown in the chat window):
+* **Profiles.** Each AutoAttack sends its job, level, weapon and the weapon skills it will use in a hidden party line (`aa~g p ...`, never shown in the chat window; since v4.91 teammates' lines are dropped before the game prints them):
   * on `aa fight`, when a player joins, after zoning, and on `aa gsc ?`;
   * when your job or main-hand weapon changes while you're idle, after it stays that way `weapon_hold` seconds (3). Swaps mid-fight (Abyssea red-procs) and Dread Spikes weapons are ignored.
   * Lines go out 1.5 seconds apart by party slot, so four players never post at once.

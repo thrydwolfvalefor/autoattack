@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.90'
+_addon.version  = '4.91'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -10882,6 +10882,10 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.91 - Teammates' group skillchain lines hidden (Mark, 2026-11-20 23:55: Myth's
+        and Scrach's "aa~g p ..." showed in Shadow's party chat; his own were
+        hidden). A teammate's aa~g party line is now dropped as a packet
+        (0x017) and handled there, so the game never prints it.
 v4.90 - Dynamic group skillchain (Mark, 2026-11-20: "any of our 4 friends may
         have different jobs and weapons ... scan the players in the party for
         jobs, weapons, weaponskills, and then determine a plan for most damage").
