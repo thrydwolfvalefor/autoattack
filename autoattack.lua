@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.99'
+_addon.version  = '5.00'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -400,6 +400,15 @@ local function is_cant_target_blocked(mob_id)
         return false
     end
     return true
+end
+-- v5.00: leave a mob alone for secs (scans skip it, set_target refuses it).
+-- Global so the main loop can call it without another upvalue.
+function aa_block_mob(mob_id, secs, why)
+    if not mob_id then return end
+    cant_target_ids[mob_id] = os.clock() + (secs or 20)
+    local m = windower.ffxi.get_mob_by_id(mob_id)
+    info_msg('TARGET-GIVEUP ' .. tostring(m and m.name or '?') .. ' (' .. tostring(mob_id) .. '): ' ..
+             tostring(why) .. ' -- skipping it for ' .. math.floor(secs or 20) .. 's.')
 end
 
 -- v3.98: Drop expired cant-see blacklist entries and stale hit counters
@@ -1259,6 +1268,10 @@ NATIVE_TARGET_WAIT  = 0.4
 native_target_busy  = false
 native_target_busy_at = 0   -- v4.18: busy flag expires after NATIVE_TARGET_BUSY_MAX s
 NATIVE_TARGET_BUSY_MAX = 5
+-- v5.00: a mob the /targetbnpc fallback could not reach -> skipped for TARGET_GIVEUP_SECS
+-- (11-21 10:53: 19s retargeting one bat while /targetbnpc kept landing on another)
+NATIVE_GIVEUP      = {}
+TARGET_GIVEUP_SECS = 20
 -- v4.18: one /targetbnpc attempt (never yields). false = mob gone or dead, stop.
 function native_target_try(want_id, want_name)
     local me = windower.ffxi.get_mob_by_target('me')
@@ -1273,7 +1286,7 @@ function native_target_try(want_id, want_name)
     cmd('input /targetbnpc')
     return true
 end
-function native_target(target)
+function native_target(target, fallback)   -- v5.00: fallback = set_target's packet-miss fallback
     local _cur = windower.ffxi.get_mob_by_target('t')
     if _cur and _cur.id == target.id then return true end
     if native_target_busy and (os.clock() - native_target_busy_at) < NATIVE_TARGET_BUSY_MAX then
@@ -1305,6 +1318,7 @@ function native_target(target)
             debug_msg('TARGET-NATIVE-MISS ' .. want_name .. ' (' .. want_id .. '): cursor on ' ..
                 (t and (tostring(t.name) .. ' (' .. tostring(t.id) .. ')') or 'nothing') ..
                 ' after ' .. NATIVE_TARGET_TRIES .. ' tries.')
+            if fallback then NATIVE_GIVEUP[want_id] = os.clock() end   -- v5.00
         end
         native_target_busy = false
     end, 0)
@@ -1329,6 +1343,16 @@ function set_target(mob_id, ignore_quiet)  -- v4.20: ignore_quiet = hot switch o
     if is_cant_target_blocked(target.id) then
         debug_msg('TARGET-SKIP ' .. _name .. ' (' .. target.id .. '): temporarily blacklisted.')
         return false
+    end
+    -- v5.00: target packets AND the /targetbnpc fallback already failed on this mob: move on
+    if not ignore_quiet and NATIVE_GIVEUP[target.id] then
+        local _ga = NATIVE_GIVEUP[target.id]
+        NATIVE_GIVEUP[target.id] = nil
+        local _cur = windower.ffxi.get_mob_by_target('t')
+        if os.clock() - _ga < 15 and not (_cur and _cur.id == target.id) then
+            aa_block_mob(target.id, TARGET_GIVEUP_SECS, 'target packets and /targetbnpc both missed it')
+            return false
+        end
     end
     if not ignore_quiet and os.clock() < target_quiet_until then
         debug_msg('TARGET-SKIP ' .. _name .. ' (' .. target.id .. '): quiet window after kill/spawn.')
@@ -1369,7 +1393,7 @@ function set_target(mob_id, ignore_quiet)  -- v4.20: ignore_quiet = hot switch o
                 pkt_fallbacks = pkt_fallbacks + 1
                 info_msg('TARGET-FALLBACK ' .. _name .. ' (' .. target.id .. '): ' .. PACKET_MISS_LIMIT ..
                          ' target packets missed -- /targetbnpc once, then back to packets.')
-                return native_target(target)
+                return native_target(target, true)
             end
         end
     end
@@ -1482,6 +1506,36 @@ function hot_switch_send(dead_id)
               string.format('%.1f', d) .. 'y, ' .. (hot and 'in our fight' or 'fresh') .. ') at kill of ' .. dead_id .. '.')
     return m.id
 end
+-- v5.00: one look at a hot switch in progress; true = finished (st.ok / st.why)
+HOT_SWITCH_REATTACK = true
+function hs_verify_step(want, st)
+    local p = windower.ffxi.get_player()
+    local t = windower.ffxi.get_mob_by_target('t')
+    local m = windower.ffxi.get_mob_by_id(want)
+    if not m or not m.hpp or m.hpp <= 0 then st.why = 'new mob gone'; return true end
+    if p and p.status == 1 and t and t.id == want then st.ok = true; return true end
+    if not HOT_SWITCH_REATTACK or not auto_attack then return false end
+    if p and p.status == 0 and t and t.id == want and not st.attacked then
+        st.attacked = os.clock() - st.t0
+        cmd('input /attack on')
+    elseif p and p.status == 1 and (not t or t.id ~= want) and not st.resent and os.clock() - st.t0 >= 0.35 then
+        st.resent = true
+        engaged_switch(m)
+    end
+    return false
+end
+function hs_verify_log(want, st)
+    local p = windower.ffxi.get_player()
+    local t = windower.ffxi.get_mob_by_target('t')
+    local extra = (st.attacked and string.format(' (dropped out of attack -- /attack on after %.1fs)', st.attacked) or '') ..
+                  (st.resent and ' (switch sent twice)' or '')
+    if st.ok then
+        debug_msg('HOT-SWITCH-OK: engaged on ' .. tostring(t and t.name) .. string.format(' after %.1fs', os.clock() - st.t0) .. extra .. '.')
+    else
+        debug_msg('HOT-SWITCH-MISS: status ' .. tostring(p and p.status) .. ', cursor ' .. tostring(t and t.id) ..
+                  (st.why and (' -- ' .. st.why) or '') .. extra .. ' -- normal re-target takes over.')
+    end
+end
 -- v4.24: switch the engaged target to m without disengaging (cursor 0x058 +
 -- outgoing 0x01A 'Switch target' + turn). Live mob only, never a corpse.
 function engaged_switch(m)
@@ -1581,18 +1635,19 @@ function hot_switch_start(dead_id)
         if HOT_SWITCH_HOLD then      -- v4.41: nothing else until our first melee round on it
             hs_hold.id = want; hs_hold.since = os.clock(); hs_hold.logged = false
         end
-        coroutine.sleep(HOT_SWITCH_VERIFY)
-        local ok2, err2 = pcall(function()
-            local p = windower.ffxi.get_player()
-            local t = windower.ffxi.get_mob_by_target('t')
-            if p and p.status == 1 and t and t.id == want then
-                debug_msg('HOT-SWITCH-OK: still engaged, on ' .. tostring(t.name) .. '.')
-            else
-                debug_msg('HOT-SWITCH-MISS: status ' .. tostring(p and p.status) .. ', cursor ' ..
-                          tostring(t and t.id) .. ' -- normal re-target takes over.')
-            end
-        end)
-        if not ok2 then info_msg('HOT-SWITCH verify error: ' .. tostring(err2)) end
+        -- v5.00: look every 0.1s instead of once at 0.8s. 391 of 605 switches on 11-21
+        -- were "misses"; most had the cursor on the new mob but the game had dropped
+        -- us out of attack -> /attack on right away. Still engaged on the corpse
+        -- after 0.35s -> send the switch once more.
+        local st = {t0 = os.clock()}
+        while true do
+            coroutine.sleep(0.1)
+            local okc, done = pcall(hs_verify_step, want, st)
+            if not okc then info_msg('HOT-SWITCH verify error: ' .. tostring(done)); break end
+            if done then break end
+            if os.clock() - st.t0 >= HOT_SWITCH_VERIFY + (st.attacked and 0.8 or 0) then break end
+        end
+        pcall(hs_verify_log, want, st)
         hot_switch_until = 0
     end, 0)
 end
@@ -3697,6 +3752,9 @@ hs_provoke = {id = 0, until_t = 0}
 HOT_SWITCH_HOLD     = true
 HOT_SWITCH_HOLD_MAX = 15.0
 HOT_SWITCH_HOLD_HPP = 40
+-- v5.00: also released (after 1s) once every party PLAYER in range is on the mob --
+-- engaged on it or has acted on it (Mark, 11-21: OK'd). Solo with Trusts: unchanged.
+HOT_SWITCH_HOLD_PARTY = true
 hs_hold = {id = 0, since = 0, logged = false}
 function hs_hold_active()
     if hs_hold.id == 0 then return false end
@@ -3706,6 +3764,8 @@ function hs_hold_active()
     local why = nil
     if melee_round.id == hs_hold.id and melee_round.time >= hs_hold.since then
         why = 'first melee round landed'
+    elseif HOT_SWITCH_HOLD_PARTY and (now - hs_hold.since) >= 1.0 and party_all_on and party_all_on(hs_hold.id, hs_hold.since) then
+        why = 'whole party on it'   -- v5.00
     elseif (not t or t.id ~= hs_hold.id or not t.hpp or t.hpp <= 0) and (now - hs_hold.since) > 1.5 then
         why = 'target changed'
     elseif (now - hs_hold.since) >= HOT_SWITCH_HOLD_MAX then
@@ -4173,7 +4233,11 @@ function engage_lag_tick()
     for _, m in ipairs(_eng_players()) do
         E.seen[m.name] = true
         if not E.got[m.name] then
-            if m.mob.status == 1 and m.mob.target_index == E.idx then
+            -- v5.00: engaged on it, or first action on it (melee / WS / spell), whichever comes first
+            local _a = PARTY_ACT and m.mob.id and PARTY_ACT[m.mob.id]
+            if _a and _a.mob == E.mob and _a.t >= E.t0 then
+                E.got[m.name] = _a.t - E.t0
+            elseif m.mob.status == 1 and m.mob.target_index == E.idx then
                 E.got[m.name] = now - E.t0
             else
                 waiting = waiting + 1
@@ -4181,6 +4245,64 @@ function engage_lag_tick()
         end
     end
     if waiting == 0 or now - E.t0 > ENGAGE_GIVEUP then E.done = true end
+end
+-- v5.00: PARTY ACTIONS. The last time each party member acted on a mob (melee
+-- round, WS, spell, JA, casting begins), from the action packets this client
+-- gets for everyone nearby. Used for the leader's engage timing (first action
+-- on the mob, more exact than the other PCs' target fields) and to release the
+-- hot-switch hold once the whole party is on the mob.
+PARTY_ACT = {}      -- [actor_id] = {mob = mob id, t = os.clock()}
+PARTY_ACT_CATS = {[1] = true, [3] = true, [4] = true, [6] = true, [8] = true}
+function party_act_note(act)
+    local t1 = act.targets and act.targets[1]
+    if not t1 or not t1.id or t1.id == act.actor_id or not PARTY_ACT_CATS[act.category] then return end
+    local m = windower.ffxi.get_mob_by_id(t1.id)
+    if m and m.spawn_type == 16 then PARTY_ACT[act.actor_id] = {mob = t1.id, t = os.clock()} end
+end
+-- the other real players in the party (no Trusts), same zone, within 30y
+function party_players()
+    local out, party = {}, windower.ffxi.get_party()
+    local info = windower.ffxi.get_info()
+    local z = info and info.zone
+    for k = 1, 5 do
+        local m = party and party['p' .. k]
+        if type(m) == 'table' and m.name and m.mob and not m.mob.is_npc and (not m.zone or not z or m.zone == z)
+           and m.mob.distance and m.mob.distance <= 900 then
+            out[#out + 1] = m
+        end
+    end
+    return out
+end
+-- true when there is at least one other player and every one of them is engaged
+-- on mob_id or has acted on it since (since - 5s)
+function party_all_on(mob_id, since)
+    local mob = windower.ffxi.get_mob_by_id(mob_id)
+    if not mob or not mob.index then return false end
+    local list = party_players()
+    if #list == 0 then return false end
+    for _, m in ipairs(list) do
+        local a = PARTY_ACT[m.mob.id]
+        local on = (m.mob.status == 1 and m.mob.target_index == mob.index) or
+                   (a and a.mob == mob_id and a.t >= (since or 0) - 5)
+        if not on then return false end
+    end
+    return true
+end
+-- v5.00: TP each party player had at 1000+, last seen (for TP-banded learning)
+GSC_TPS = {}
+function gsc_tp_track()
+    local party = windower.ffxi.get_party()
+    if not party then return end
+    local now = os.clock()
+    for k = 0, 5 do
+        local m = party['p' .. k]
+        if type(m) == 'table' and m.name and (tonumber(m.tp) or 0) >= 1000 then GSC_TPS[m.name] = {tp = m.tp, t = now} end
+    end
+end
+function gsc_tp_at(who)
+    local e = who and GSC_TPS[who]
+    if e and os.clock() - e.t <= 5 then return e.tp end
+    return nil
 end
 -- v4.99: PARTY STATS / EVENTS / REPORT (Mark, 2026-11-21: the other PCs' log
 -- files can't be had, so "use party chat to send updates from the other clients
@@ -4230,7 +4352,9 @@ function pstat_on_action(act)
     if me and cat == 7 and act.param == 28787 then PSTAT.intr = PSTAT.intr + 1 end
     local t1 = act.targets[1]
     local a1 = t1 and type(t1.actions) == 'table' and t1.actions[1]
+    if cat == 7 and gsc_tp_track then pcall(gsc_tp_track) end   -- v5.00: TP before the WS
     if not t1 or not a1 or not gsc_party_ids()[act.actor_id] then return end
+    if party_act_note then party_act_note(act) end   -- v5.00
     if (cat == 1 or cat == 3 or cat == 4) and t1.id and t1.id ~= act.actor_id then REP.hit[t1.id] = true end
     if cat == 3 and GSC_WS_MSG[a1.message] then
         if me then
@@ -4268,6 +4392,7 @@ function pstat_leader()
 end
 function pstat_tick()
     local now = os.clock()
+    if gsc_tp_track then pcall(gsc_tp_track) end   -- v5.00
     pstat_at = pstat_at or now
     if now - pstat_at >= PSTAT_SECS then
         pstat_at = now
@@ -4285,10 +4410,12 @@ function pstat_tick()
             local mt, why = windower.ffxi.get_mob_by_target('t'), 'other'
             if pl.vitals and pl.vitals.hp == 0 then why = 'dead'
             elseif pl.status == 1 and mt and mt.index ~= lm.target_index and (mt.hpp or 0) > 0 then why = 'other mob'
+            elseif pl.status == 1 then why = 'last mob'   -- v5.00: still engaged on the one that just died
             elseif now - PSTAT.cast_at < 3 then why = 'casting'
             elseif lm.x and mob.x and math.sqrt((lm.x - mob.x) ^ 2 + (lm.y - mob.y) ^ 2) > ENGAGE_AWAY then why = 'mob coming'
             elseif mob.distance and math.sqrt(mob.distance) > 20 then why = 'far'
-            elseif not auto_attack then why = 'AA off' end
+            elseif not auto_attack then why = 'AA off'
+            elseif pl.status == 0 then why = 'idle' end   -- v5.00: was 'other'
             PSTAT.S = {idx = lm.target_index, t0 = now, why = why, done = false}
             S = PSTAT.S
         end
@@ -5384,6 +5511,7 @@ GSC_DEF = {
     window_open = 3.2, window_close = 10.0, window_step = 0, window_min = 8.0, ws_lead = 1.2,
     handoff_wait = 1.5, opener_wait = 2.0, max_steps = 8, plan_depth = 3, filler_wait_tp = 600,
     bank_hpp = 10, noshow_max = 3, block_tp = 500, pre_wait = 6.0, tp_cap = 2900,
+    burst = true, nuke_hold = true, tp_band = 500, band_min = 5,   -- v5.00
     once_per_mob = {['Great Axe'] = 'Full Break'},
     filler_jobs = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
     fillers = {},
@@ -6437,7 +6565,26 @@ function gsc_k_est(kind, who, ws)
 end
 -- v4.98: a sample far under a settled average (odd_ratio of it, odd_min+ samples) is
 -- skipped -- unless odd_repeat come in a row (then it's real: a weapon / gear change)
-function gsc_k_odd(kind, who, key, x)
+GSC_KBAND = {}   -- v5.00: [kind|who|ws|band] = {n, a} this session
+function gsc_k_odd(kind, who, key, x, tp)
+    -- v5.00: with the TP the WS was used at known, compare only with samples at
+    -- similar TP (tp_band). 11-21: a 2.8k Upheaval at ~1000 TP (step 2 after Full
+    -- Break) was thrown out against its 16k all-TP average -- it was normal.
+    local band = gsc_num('tp_band')
+    if tp and band > 0 then
+        local bid = kind .. '|' .. tostring(who) .. '|' .. tostring(key) .. '|' .. math.floor(tp / band)
+        local b = GSC_KBAND[bid]
+        if b and b.n >= gsc_num('band_min') and x < b.a * gsc_num('odd_ratio') then
+            debug_msg(string.format('GSC: %s %s %.1fk not learned -- under %d%% of its %.1fk average at %d-%d TP.', tostring(who),
+                tostring(key), x, gsc_num('odd_ratio') * 100, b.a, math.floor(tp / band) * band, math.floor(tp / band) * band + band - 1))
+            return true
+        end
+        b = b or {n = 0, a = 0}
+        GSC_KBAND[bid] = b
+        b.n = b.n + 1
+        b.a = b.a + (x - b.a) / math.min(b.n, 30)
+        return false
+    end
     local e = GSC_K[kind] and GSC_K[kind][who] and GSC_K[kind][who][key]
     local id = kind .. '|' .. tostring(who) .. '|' .. tostring(key)
     if not e or e.n < gsc_num('odd_min') or x >= e.a * gsc_num('odd_ratio') then GSC_KODD[id] = nil; return false end
@@ -6485,7 +6632,7 @@ function gsc_learn_ws(act, name, a1)
     end
     if a1.message ~= 188 and (tonumber(a1.param) or 0) > 0 then
         gsc_k_ensure()
-        if gsc_k_odd('ws', who, name, a1.param / 1000) then return end   -- v4.98
+        if gsc_k_odd('ws', who, name, a1.param / 1000, gsc_tp_at and gsc_tp_at(who)) then return end   -- v4.98 (v5.00: TP band)
         gsc_k_add('ws', who, name, a1.param / 1000)
         local mn = gsc_mob_of(act)   -- v4.92
         if mn then gsc_k_add('wsm', who, name .. '@' .. mn, a1.param / 1000) end
@@ -6499,7 +6646,7 @@ function gsc_learn_sc(act, name, a1, sc, ends)
     local mult = ends and GSC_MULT['end'] or GSC_MULT[GSC_LEVEL[sc] or 0]
     if mult and mult > 0 then
         gsc_k_ensure()
-        if gsc_k_odd('sc', who, name, dmg / 1000 / mult) then return end   -- v4.98
+        if gsc_k_odd('sc', who, name, dmg / 1000 / mult, gsc_tp_at and gsc_tp_at(who)) then return end   -- v4.98 (v5.00: TP band)
         gsc_k_add('sc', who, name, dmg / 1000 / mult)
         local mn = gsc_mob_of(act)   -- v4.92
         if mn then gsc_k_add('scm', who, name .. '@' .. mn, dmg / 1000 / mult) end
@@ -6857,76 +7004,117 @@ function gsc_knowledge_lines()
 end
 
 
+-- v5.00: MAGIC BURST rework (11-21: Scrach's Fire IV did 9-10k as a burst, 2.7k
+-- without; half his Fire IVs burst only by luck).
+--   * A skillchain bursts every element it carries: Light = fire / lightning /
+--     wind / light, Fusion = fire / light, Distortion = ice / water, ... (the
+--     old code looked up one element -- "light" -- which RDM has no list for).
+--   * MB_WINDOW s to start the cast (was 3s), and the cast must end inside it.
+--   * The strongest ready spell from those lists (MP cost), the mob's weakness
+--     element first on a near tie.
+--   * group_skillchain.burst = true turns bursting on for a filler job (RDM,
+--     BLM, ...) while the group skillchain is active, even when that job's
+--     weakness_spells.mb_enabled is false.
+MB_WINDOW = 7.0
+MB_SC = nil
+SC_BURST = {
+    Light = {'fire', 'lightning', 'wind', 'light'}, Darkness = {'ice', 'water', 'earth', 'dark'},
+    Gravitation = {'earth', 'dark'}, Fragmentation = {'lightning', 'wind'},
+    Distortion = {'ice', 'water'}, Fusion = {'fire', 'light'},
+    Compression = {'dark'}, Liquefaction = {'fire'}, Induration = {'ice'}, Reverberation = {'water'},
+    Transfixion = {'light'}, Scission = {'earth'}, Detonation = {'wind'}, Impaction = {'lightning'},
+}
+-- a filler job bursting because the group skillchain is on
+function mb_party_burst()
+    if not gsc_cfg or gsc_cfg('burst') == false then return false end
+    local pl = windower.ffxi.get_player()
+    local job = pl and pl.main_job
+    local list = gsc_cfg('filler_jobs')
+    local filler = false
+    for _, j in ipairs(type(list) == 'table' and list or {}) do if j == job then filler = true end end
+    return filler and gsc_active and gsc_active() or false
+end
+function mb_enabled_now()
+    local w = current_config and current_config.weakness_spells
+    if not w then return false end
+    if w.mb_enabled ~= false then return true end
+    return mb_party_burst()
+end
+local function mb_clear() MB_SC = nil; skillchain_element = nil; skillchain_time = nil end
 function use_magic_burst()
-    if not skillchain_element or not skillchain_time then return false end
-	
-	-- Check if MB is enabled in config
-    if not current_config.weakness_spells or current_config.weakness_spells.mb_enabled == false then
-        -- debug_msg('MB: Disabled in config.')
-        skillchain_element = nil
-        skillchain_time = nil
-        return false
-    end
-
-    -- Check if we're still inside the MB window
-    if (os.clock() - skillchain_time) > SC_WINDOW then
-        skillchain_element = nil
-        skillchain_time = nil
-        return false
-    end
-
+    local sc = MB_SC
+    if not sc and not (skillchain_element and skillchain_time) then return false end
+    if not mb_enabled_now() then mb_clear(); return false end
+    local now = os.clock()
+    local t0 = (sc and sc.t) or skillchain_time
+    if not t0 or (now - t0) > MB_WINDOW then mb_clear(); return false end
+    local w = current_config.weakness_spells
     local player = windower.ffxi.get_player()
     if not player or not player.vitals then return false end
-
     local target = windower.ffxi.get_mob_by_target('t')
-    if not target or not target.name then return false end
-
-    -- Get the spell list for the skillchain element
-    local spell_list = current_config.weakness_spells[skillchain_element]
-    if not spell_list or #spell_list == 0 then
-        debug_msg('MB: No spell configured for element: ' .. skillchain_element)
-        return false
+    if not target or not target.name or not target.hpp or target.hpp <= 0 then return false end
+    if sc and sc.mob and sc.mob ~= target.id then return false end   -- the chain was on another mob
+    local elems = (sc and SC_BURST[sc.name]) or {skillchain_element}
+    local weak = nil
+    for pattern, el in pairs(mob_weaknesses) do
+        if target.name:find(pattern, 1, true) then weak = el; break end
     end
-
-    local spell_recasts = windower.ffxi.get_spell_recasts()
-    if not spell_recasts then return false end
-
-    -- Try each spell in the list
-	for _, spell_entry in ipairs(spell_list) do
-		if not spell_entry or not spell_entry.name then break end
-        local spell_name = spell_entry.name
-        local spell_data = res_with('spells', 'english', spell_name)
-        local can_mb = true
-
-        if not spell_data or not spell_data.id then can_mb = false end
-        if can_mb and spell_data and (spell_recasts[spell_data.id] or -1) ~= 0 then can_mb = false end
-        if can_mb and spell_data and (not player.vitals or ((player.vitals.mp or 0) < spell_data.mp_cost)) then can_mb = false end
-		if can_mb and not check_ninja_tools(spell_name) then can_mb = false end
-
-        if can_mb then
-            local t_mb = windower.ffxi.get_mob_by_target('t')
-            if not t_mb or not t_mb.hpp or t_mb.hpp <= 0 then return false end
-            info_msg('MB: Casting ' .. spell_name .. ' on ' .. (t_mb.name or '?'))
-            face('f')
-            coroutine.sleep(0.1)  -- let face resolve before spell fires (prevents invalid arg)
-            local mb_cmd = 'input /ma "' .. tostring(spell_name) .. '" <t>'
-            cmd(mb_cmd)
-            magic_last_used[spell_name] = os.time()
-            magic_use_tracker[spell_name] = (magic_use_tracker[spell_name] or 0) + 1
-            skillchain_element = nil
-            skillchain_time = nil
-            do
-                local fc  = (current_config.magic and current_config.magic.fast_cast_pct) or 0
-                local bct = spell_data.cast_time or 3.0
-                local act = bct * math.max(0.1, (100 - fc) / 100)
-                coroutine.sleep(spell_entry.cast_time or math.max(act + 1.5, 2.5))
+    local recasts = windower.ffxi.get_spell_recasts()
+    if not recasts then return false end
+    local fc = (current_config.magic and current_config.magic.fast_cast_pct) or 0
+    local best, best_data, best_score
+    for _, el in ipairs(elems) do
+        for _, e in ipairs(type(w[el]) == 'table' and w[el] or {}) do
+            if type(e) == 'table' and e.name then
+                local sd = res_with('spells', 'english', e.name)
+                if sd and sd.id and (recasts[sd.id] or -1) == 0 and (player.vitals.mp or 0) >= (sd.mp_cost or 0)
+                   and check_ninja_tools(e.name) then
+                    local cast = (sd.cast_time or 3.0) * math.max(0.1, (100 - fc) / 100)
+                    local score = (sd.mp_cost or 0) * ((el == weak) and 1.15 or 1)
+                    if (now - t0) + cast <= MB_WINDOW + 0.5 and (not best_score or score > best_score) then
+                        best, best_data, best_score = e, sd, score
+                    end
+                end
             end
-            return true
         end
     end
-
-    debug_msg('MB: No usable spell for SC element: ' .. tostring(skillchain_element))
-    return false
+    if not best then
+        if gsc_dbg then gsc_dbg('mbnone', 'MB: nothing ready for ' .. tostring(sc and sc.name or skillchain_element) ..
+            ' (' .. table.concat(elems, '/') .. ').') end
+        return false
+    end
+    info_msg(string.format('MB: %s on %s (%s, %.1fs into the window)', best.name, tostring(target.name),
+        tostring(sc and sc.name or skillchain_element), now - t0))
+    face('f')
+    coroutine.sleep(0.1)  -- let face resolve before spell fires (prevents invalid arg)
+    cmd('input /ma "' .. tostring(best.name) .. '" <t>')
+    magic_last_used[best.name] = os.time()
+    magic_use_tracker[best.name] = (magic_use_tracker[best.name] or 0) + 1
+    mb_clear()
+    local bct = best_data.cast_time or 3.0
+    local act = bct * math.max(0.1, (100 - fc) / 100)
+    coroutine.sleep(best.cast_time or math.max(act + 1.5, 2.5))
+    return true
+end
+-- v5.00: hold weakness nukes while a skillchain step is live on our mob, so they
+-- go off as bursts (group_skillchain.nuke_hold; a filler only, bursting on)
+function nuke_hold_active()
+    if not gsc_cfg or gsc_cfg('nuke_hold') == false or not gsc_active or not gsc_active() then return false end
+    if not mb_enabled_now() then return false end
+    local w = current_config and current_config.weakness_spells
+    if not (w and w.mb_enabled ~= false) and not mb_party_burst() then return false end
+    local pl = windower.ffxi.get_player()
+    local job = pl and pl.main_job
+    local filler = false
+    for _, j in ipairs(type(gsc_cfg('filler_jobs')) == 'table' and gsc_cfg('filler_jobs') or {}) do if j == job then filler = true end end
+    if not filler then return false end
+    local t = windower.ffxi.get_mob_by_target('t')
+    local c = GSC and GSC.chain
+    if not t or not c or c.target ~= t.id or #(c.props or {}) == 0 or (c.step or 1) >= gsc_num('max_steps') then return false end
+    local _, close_t = gsc_window(c)
+    if os.clock() >= close_t then return false end
+    gsc_dbg('nukehold', string.format('MB-HOLD: %s live (step %d) -- holding nukes for the burst.', tostring(c.label), c.step or 1))
+    return true
 end
 
 
@@ -7573,6 +7761,7 @@ function use_weakness_magic()
         -- debug_msg('WEAKNESS: Disabled in config.')
         return false
     end
+    if nuke_hold_active and nuke_hold_active() then return false end   -- v5.00: save it for the burst
 
     local player = windower.ffxi.get_player()
     if not player or not player.vitals then return false end
@@ -9403,6 +9592,7 @@ function main_logic_loop(my_gen)
 				if not esc_party_ids[current_target.claim_id]
 				   and not is_purple_excluded(current_target.name) then
 					info_msg('Purple mob: ' .. (current_target.name or '?') .. ' claimed by another party. Disengaging.')
+					aa_block_mob(current_target.id, 60, 'claimed by another party')   -- v5.00
 					cmd('input /attack off')
 					cmd('input /targetoff')
 					coroutine.sleep(0.5)  -- brief settle (down from 1.0s)
@@ -9455,11 +9645,22 @@ function main_logic_loop(my_gen)
 					purple_limbo_until = 0
 					set_target(rescue_mob.id)
 					coroutine.sleep(0.6)
-					face('f')
-					coroutine.sleep(0.3)
-					cmd('input /attack on')
-					coroutine.sleep(0.5)
-					skip_combat_this_tick = false  -- new target engaged, allow combat this tick
+					-- v5.00: only attack once the cursor is really on it (11-21 10:53: /attack on
+					-- went to the wrong bat, then off again, then 19s of retargeting)
+					local _pc = windower.ffxi.get_mob_by_target('t')
+					if not (_pc and _pc.id == rescue_mob.id) then
+						coroutine.sleep(0.4)
+						_pc = windower.ffxi.get_mob_by_target('t')
+					end
+					if _pc and _pc.id == rescue_mob.id then
+						face('f')
+						coroutine.sleep(0.3)
+						cmd('input /attack on')
+						coroutine.sleep(0.5)
+						skip_combat_this_tick = false  -- new target engaged, allow combat this tick
+					else
+						debug_msg('Purple escape: cursor did not move to ' .. (rescue_mob.name or '?') .. ' -- no /attack on, the normal scan takes over.')
+					end
 				else
 					-- Nothing in range yet. Start (or maintain) 15s limbo.
 					-- The scan will keep running each tick, so the moment a mob
@@ -11619,6 +11820,39 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.00 - Faster party engage, hot-switch, targeting, magic bursts, learning
+        (Mark, 2026-11-21, after the v4.99 report: "lets build all that").
+        * Members (aa fight, ASSIST): fast assist ignored the leader's Provoke
+          when it came while they were still engaged on the dead mob, and the
+          leader's hot-switch hold then sent nothing for 6-8s -> members took
+          5-9s (median) to join each bat. Now they remember the leader's mob:
+          still engaged on a corpse -> switch to it at once (FAST-SWITCH),
+          idle -> attack it (checked every 0.25s for 20s).
+        * Hot-switch hold also releases (after 1s) once every party player in
+          range is engaged on the mob or has acted on it (Mark OK'd it).
+          Solo with Trusts: unchanged.
+        * Engage timing: the leader counts a member's first action on the mob
+          (melee, WS, spell, JA) or engaging it, whichever is first; members'
+          slow reasons say "last mob" (still on the dead one) and "idle"
+          instead of "other".
+        * Hot switch: watched every 0.1s. Cursor on the new mob but dropped
+          out of attack -> /attack on at once; still on the corpse after
+          0.35s -> the switch is sent again (391 of 605 were "misses" on
+          11-21, most of them the first kind).
+        * Purple mob: skipped for 60s; the rescue only attacks once the cursor
+          is really on the new mob. A mob that target packets and the
+          /targetbnpc fallback both missed is skipped for 20s (11-21 10:53:
+          19s spent retargeting one bat).
+        * Magic bursts: every element the skillchain carries (Light = fire /
+          lightning / wind / light, Fusion = fire / light ...), a 7s window
+          (was 3s), the strongest ready spell (weakness element first on a
+          tie). group_skillchain.burst = true turns bursting on for filler
+          jobs while GSC is active (Scrach's mb_enabled stays false in his own
+          file); group_skillchain.nuke_hold = true holds weakness nukes while
+          a chain step is live on the mob so they land as bursts.
+        * Learning: the TP each player had at the WS is tracked; a low sample
+          is only thrown out against samples at similar TP (tp_band 500,
+          band_min 5) -- low-TP Upheavals are real.
 v4.99 - Party stats, events and report over party chat (Mark, 2026-11-21:
         "we won't be able to consistently get the actual physical log files
         from the other computers ... use party chat to send updates from the
@@ -12684,6 +12918,10 @@ windower.register_event('action', function(action)
     for _, target in pairs(action.targets) do
         if target and target.actions then
             for _, act in pairs(target.actions) do
+                -- v5.00: the skillchain by name (any WS message), for the burst elements
+                if act and act.has_add_effect and GSC_SC_MSG and GSC_SC_MSG[act.add_effect_message] then
+                    MB_SC = {name = GSC_SC_MSG[act.add_effect_message], t = os.clock(), mob = target.id}
+                end
                 if act and act.message == 185 and act.has_add_effect then
                     local sc_id = act.add_effect_animation
                     if sc_id then

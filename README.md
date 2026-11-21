@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.99** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.00** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -565,6 +565,11 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
   * `aa~g e` right away for a death, an error or a watchdog restart. Every other AutoAttack shows and logs it as `PARTY-EVENT <name>: ...`.
   * The leader (PULL mode) writes a `PARTY REPORT` every 10 minutes from what its own game sees (kills per hour, each player's WS, skillchains by type, WS that closed one, magic bursts) plus each member's line. `//aa report` (or `/p aa gsc report`) asks everyone now and prints it after about 10 seconds.
   * The knowledge sync also carries the per-mob-type figures.
+* **v5.00:**
+  * Members in `aa fight` remember the leader's mob. If they're still engaged on the mob that just died, they switch to it at once (`FAST-SWITCH`); if idle, they attack it.
+  * The leader's hot-switch hold also ends (after 1s) once every party player in range is on the mob.
+  * Filler jobs (RDM, BLM ...) magic burst while the group skillchain is active (`burst = true`), and hold weakness nukes while a skillchain step is live so they land as bursts (`nuke_hold = true`). A skillchain bursts every element it carries (Light: fire, thunder, wind, light; Fusion: fire, light ...), with a 7s window.
+  * Damage learning compares a low sample only with samples at similar TP (`tp_band`, `band_min`).
 * `//aa gsc` marks players whose profile it has with `(profile)`. `//aa gsc k` lists what is learned for the party, `//aa gsc sync` compares now, `//aa gsc save` writes the learning file, `//aa gsc report` / `//aa report` prints the party report, `//aa gsc ?` (or `/p aa gsc ?`) re-sends profiles.
 * Settings in `group_skillchain`: `announce`, `learn`, `sync` (all true), `learn_min` 3, `learn_window` 60, `mob_k` 5, `odd_min` 20, `odd_ratio` 0.25, `odd_repeat` 3, `pool_max` 6, `weapon_hold` 3, `mb_weight` 0.5, `sync_min` 5.
 

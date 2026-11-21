@@ -254,6 +254,12 @@ local dread_spikes = {enabled = true,
 --   pool_max       most WS planned per player when the pool is "all you know"
 --   weapon_hold    s a new job / weapon must stay (while idle) before it is sent
 --   mb_weight      share of the fillers' learned magic burst added per skillchain
+--   burst          v5.00: true = filler jobs (RDM, BLM ...) magic burst while GSC is active,
+--                  even when their weakness_spells.mb_enabled is false
+--   nuke_hold      v5.00: true = a filler holds weakness nukes while a skillchain step is
+--                  live on the mob, so they land as bursts
+--   tp_band / band_min  v5.00: a low WS sample is only skipped against samples at
+--                  similar TP (500-TP bands, 5+ samples)
 -- ---------------------------------------------------------------------------
 local group_skillchain = {enabled = true,
 	min_players    = 2,
@@ -289,6 +295,10 @@ local group_skillchain = {enabled = true,
 	mb_weight      = 0.5,
 	pre_wait       = 6.0,    -- v4.87: s others hold their opener for a teammate's once-per-mob WS (Full Break)
 	tp_cap         = 2900,   -- v4.96: a player at this TP or more opens first (TP past 3000 is lost)
+	burst          = true,   -- v5.00: fillers magic burst while GSC is active
+	nuke_hold      = true,   -- v5.00: fillers hold weakness nukes for the burst
+	tp_band        = 500,    -- v5.00
+	band_min       = 5,      -- v5.00
 	once_per_mob   = {['Great Axe'] = 'Full Break'},
 	filler_jobs    = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
 	fillers        = {},

@@ -2146,6 +2146,7 @@ windower.register_event('zone change', function()
     P.busy, P.step, P.stack = nil, 'idle', nil
     P.follow_fight = false
     P.fast_last, P.engaging = {}, false  -- v4.50
+    P.lead_mob = nil   -- v5.00
     -- v4.52: warped (or zoned) -- stop any warp in progress, free the ring slot
     P.warp_gen = (P.warp_gen or 0) + 1
     P.warping = false
@@ -2234,11 +2235,55 @@ local function fast_engage(mob_id, why)
     end, 0)
 end
 
+-- v5.00: FAST SWITCH. Still engaged on the mob that just died (the game takes a
+-- moment to drop you) when the leader hits the next one: switch to it while
+-- engaged, the way the leader's hot switch does, instead of waiting to go idle.
+-- Never switches away from a live mob.
+local function corpse_switch(mob_id, why)
+    if P.engaging then return end
+    local t = windower.ffxi.get_mob_by_target('t')
+    if t and t.id == mob_id then return end
+    if t and t.spawn_type == 16 and (t.hpp or 0) > 0 then return end   -- still fighting a live mob
+    local now = os.clock()
+    local last = P.fast_last[mob_id]
+    if last and now - last < 2 then return end
+    P.fast_last[mob_id] = now
+    local m = windower.ffxi.get_mob_by_id(mob_id)
+    if not m or m.spawn_type ~= 16 or not m.valid_target or not m.hpp or m.hpp <= 0 then return end
+    if engaged_switch and engaged_switch(m) then
+        say(string.format('FAST-SWITCH >>>> %s (%s, off the last kill).', tostring(m.name), why))
+    end
+end
+-- v5.00: the leader's mob is ours to join for LEAD_MOB_KEEP s after the leader acts on it
+LEAD_MOB_KEEP = 20
+local function lead_mob_ok(m)
+    if not m or m.spawn_type ~= 16 or not m.valid_target or not m.hpp or m.hpp <= 0 then return false end
+    if not m.distance or m.distance > 625 then return false end   -- 25y
+    if m.claim_id and m.claim_id ~= 0 then
+        for _, x in ipairs(members()) do if x.id == m.claim_id then return true end end
+        return false
+    end
+    return true
+end
+local function lead_mob_watch()
+    local now = os.clock()
+    if now < (P.lead_watch_at or 0) then return end
+    P.lead_watch_at = now + 0.25
+    if not P.follow_fight or not P.lead_mob or now - (P.lead_mob_at or 0) > LEAD_MOB_KEEP then return end
+    if not aa_running() or aa_get_mode() ~= 'assist' then return end
+    local p = me()
+    if not p then return end
+    local m = windower.ffxi.get_mob_by_id(P.lead_mob)
+    if not lead_mob_ok(m) then P.lead_mob = nil; return end
+    if p.status == 0 then fast_engage(P.lead_mob, "leader's mob")
+    elseif p.status == 1 then corpse_switch(P.lead_mob, "leader's mob") end
+end
+
 windower.register_event('action', function(act)
     if not P.follow_fight or not act or not act.actor_id or not act.targets then return end
     if not aa_running() or aa_get_mode() ~= 'assist' then return end
     local p = me()
-    if not p or p.status ~= 0 then return end
+    if not p or (p.status ~= 0 and p.status ~= 1) then return end
     local cat = act.category
     if cat == 7 or cat == 8 or cat == 9 or cat == 12 then return end  -- "begins" (no hit yet)
     local t1 = act.targets[1]
@@ -2246,7 +2291,10 @@ windower.register_event('action', function(act)
     if not tid then return end
     if P.leader_id and act.actor_id == P.leader_id then
         local m = windower.ffxi.get_mob_by_id(tid)
-        if m and m.spawn_type == 16 then fast_engage(tid, 'leader on it') end
+        if m and m.spawn_type == 16 and (m.hpp or 0) > 0 then
+            P.lead_mob, P.lead_mob_at = tid, os.clock()   -- v5.00
+            if p.status == 0 then fast_engage(tid, 'leader on it') else corpse_switch(tid, 'leader on it') end
+        end
         return
     end
     -- a mob acting on someone in the party (you, a player or a Trust)
@@ -2257,7 +2305,8 @@ windower.register_event('action', function(act)
                 if am.claim_id == 0 or (function()
                         for _, x in ipairs(members()) do if x.id == am.claim_id then return true end end
                         return false end)() then
-                    fast_engage(act.actor_id, 'on ' .. mb.name)
+                    if p.status == 0 then fast_engage(act.actor_id, 'on ' .. mb.name)
+                    else corpse_switch(act.actor_id, 'on ' .. mb.name) end   -- v5.00
                 end
                 return
             end
@@ -2268,6 +2317,7 @@ end)
 windower.register_event('prerender', function()
     watch_party()
     stack_watch()   -- v4.75
+    lead_mob_watch()   -- v5.00
     if P.stack or P.follow or P.running then move_tick() end
     if gsc_watch then pcall(gsc_watch) end   -- v4.90: job / weapon change -> profile
 end)
