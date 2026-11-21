@@ -866,6 +866,7 @@ local HELP = {
     'aa warp | aa 299  (party: a Warp II mage warps everyone, else each uses its Warp Ring)',
     'aa reload  (/t: that character, /p: everyone) | aa reload all  (whole party)',
     'aa update [me|force]  (whole party, any zone; "me" = only you -- newest AutoAttack from GitHub, then reload)',
+    'aa update previous | aa update 4.88 | aa update list  (go back to an older version on GitHub; [me] = only you)',
     'aa version [me]  (whole party compares with GitHub)  |  aa rollback [all]  (back to the version before the last update)',
 }
 
@@ -1712,10 +1713,60 @@ local function update_base()
     return base
 end
 
-local function do_update(ctx, force)
+-- v4.93: older versions on GitHub. Every release is also published as a
+-- branch named vX.YY (tags / GitHub releases named vX.YY count too), so
+-- "aa update previous" or "aa update 4.88" can go back to one when the
+-- newest has a problem (Mark, 2026-11-21). One API call each for branches
+-- and tags; files are read from raw.githubusercontent.com/<owner>/<repo>/vX.YY/.
+AA_UPD_MIN = '4.69'   -- oldest release kept on GitHub (v4.83 / v4.84 are left out: they crash)
+function aa_upd_repo()
+    local base = opt('update_url') or UPDATE_URL
+    if base:sub(-1) ~= '/' then base = base .. '/' end
+    return base:match('^https://raw%.githubusercontent%.com/([^/]+)/([^/]+)/')
+end
+-- list of versions, newest first, and version -> ref name
+function aa_upd_versions()
+    local o, r = aa_upd_repo()
+    if not o then return nil, 'update_url is not a GitHub address -- no older versions to pick from.' end
+    local list, refs = {}, {}
+    for _, kind in ipairs({'branches', 'tags'}) do
+        local body = http_get('https://api.github.com/repos/' .. o .. '/' .. r .. '/' .. kind .. '?per_page=100',
+                              {Accept = 'application/vnd.github+json'})
+        for ref in (body or ''):gmatch('"name"%s*:%s*"(v?%d+%.%d+[%.%d]*)"') do
+            local v = ref:gsub('^v', '')
+            if not refs[v] and ver_cmp(v, AA_UPD_MIN) >= 0 then refs[v] = ref; list[#list + 1] = v end
+        end
+    end
+    if #list == 0 then return nil, 'found no versions on GitHub (or GitHub did not answer).' end
+    table.sort(list, function(a, b) return ver_cmp(a, b) > 0 end)
+    return list, refs
+end
+-- "previous" / "prev" / "back" / "4.88" / "v4.88" -> version, ref   (or nil, why)
+function aa_upd_resolve(sel)
+    local list, refs = aa_upd_versions()
+    if not list then return nil, refs end
+    local have = tostring(_addon.version)
+    if sel == 'previous' or sel == 'prev' or sel == 'back' then
+        for _, v in ipairs(list) do
+            if ver_cmp(v, have) < 0 then return v, refs[v] end
+        end
+        return nil, 'no version older than v' .. have .. ' on GitHub.'
+    end
+    local want = tostring(sel):gsub('^v', '')
+    if refs[want] then return want, refs[want] end
+    local near = {}
+    for i = 1, math.min(#list, 8) do near[#near + 1] = list[i] end
+    return nil, 'v' .. want .. ' is not on GitHub. Newest: ' .. table.concat(near, ', ') .. ' ("aa update list").'
+end
+
+local function do_update(ctx, force, ref)
     local me_n = my_name()
     local function bad(text) reply(ctx, me_n .. ': update failed -- ' .. text); say('UPDATE failed: ' .. text) end
     local base = update_base()   -- v4.79
+    if ref then   -- v4.93: a chosen version (aa update previous / aa update 4.88)
+        local o, r = aa_upd_repo()
+        base = 'https://raw.githubusercontent.com/' .. o .. '/' .. r .. '/' .. ref .. '/'
+    end
     local man, e = http_get(base .. 'manifest.txt')
     if not man then return bad('manifest.txt: ' .. tostring(e)) end
     local ver = man:match('version%s*=%s*([%d%.]+)')
@@ -1733,7 +1784,7 @@ local function do_update(ctx, force)
     local have = tostring(_addon.version)
     local c = ver_cmp(ver, have)
     if c == 0 and not force then return reply(ctx, me_n .. ': already on v' .. have .. '.') end
-    if c < 0 and not force then
+    if c < 0 and not force and not ref then   -- v4.93: a chosen version may be older
         return reply(ctx, me_n .. ': GitHub has v' .. ver .. ', older than v' .. have .. ' -- not downgrading ("aa update force" does it).')
     end
     say('UPDATE: downloading v' .. ver .. ' (have v' .. have .. ', ' .. #files .. ' files).')
@@ -1835,15 +1886,34 @@ local function cmd_update(ctx, w)
         if ctx.src == 'local' and not mine and has_players() then return party_command('aa version') end
         return cmd_update_check(ctx)
     end
-    if not mine and (w[2] == 'all' or ctx.src == 'local') and ctx.src ~= 'party' and has_players() then
+    local force = w[2] == 'force' or w[3] == 'force' or w[4] == 'force'
+    -- v4.93: aa update list | previous | <version>
+    local sel = w[2]
+    if sel == 'list' then
+        local list, why = aa_upd_versions()
+        if not list then return reply(ctx, my_name() .. ': ' .. tostring(why)) end
+        local top = {}
+        for i = 1, math.min(#list, 15) do top[#top + 1] = list[i] end
+        return reply(ctx, my_name() .. ': v' .. tostring(_addon.version) .. ' -- on GitHub: ' .. table.concat(top, ', '))
+    end
+    local ref
+    if sel == 'previous' or sel == 'prev' or sel == 'back' or (sel and sel:match('^v?%d+%.%d+[%.%d]*$')) then
+        local ver, r = aa_upd_resolve(sel)
+        if not ver then return reply(ctx, my_name() .. ': ' .. tostring(r)) end
+        -- typed: the whole party goes to that exact version (not each one's own "previous")
+        if not mine and ctx.src == 'local' and has_players() then
+            return party_command('aa update ' .. ver .. (force and ' force' or ''))
+        end
+        ref = r
+    elseif not mine and (w[2] == 'all' or ctx.src == 'local') and ctx.src ~= 'party' and has_players() then
         if ctx.src == 'tell' then reply(ctx, my_name() .. ': updating the whole party.') end
-        return party_command('aa update' .. ((w[2] == 'force' or w[3] == 'force') and ' force' or ''))
+        return party_command('aa update' .. (force and ' force' or ''))
     end
     -- v4.82: no "fighting" refusal -- the reloaded AA resumes the fight (save_resume)
     if P.busy then return reply(ctx, my_name() .. ' is busy: ' .. P.busy .. ' -- "aa cancel" first, then "aa update".') end
     if P.updating then return end
     P.updating = true
-    local ok, err = pcall(do_update, ctx, w[2] == 'force' or w[3] == 'force')
+    local ok, err = pcall(do_update, ctx, force, ref)
     P.updating = false
     if not ok then reply(ctx, my_name() .. ': update failed -- ' .. tostring(err)) end
 end

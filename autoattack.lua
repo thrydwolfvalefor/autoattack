@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.92'
+_addon.version  = '4.93'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -10949,6 +10949,15 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.93 - aa update previous / aa update <version> / aa update list (Mark,
+        2026-11-21: "'aa update previous' can be used to select the previous
+        version if the current one is having issues, or 'aa update 4.12'").
+        * Every release is also on GitHub as a branch named vX.YY (from
+          v4.69; v4.83 / v4.84 are left out -- they crash). "previous" = the
+          newest one older than yours; "4.88" / "v4.88" = that one; "list"
+          shows what's there. Typed, the whole party goes to the same
+          version; "me" = only you. A chosen version may be older (no
+          "force" needed); the plain "aa update" still goes to the newest.
 v4.92 - Group skillchain learning per mob type; no-show list kept; caster
         closers from 1000 TP (Mark, 2026-11-21, after a Sortie hour: "Different
         mobs have different defenses, so tracking dmg per mob might be
