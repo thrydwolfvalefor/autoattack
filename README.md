@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.89** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.90** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -181,7 +181,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | `help` | Replies with the command list. |
 | `reload [all]` (or `rl`) | Reloads AutoAttack (`//lua r autoattack`) (v4.60). By `/tell`: just that character. In party chat: every AutoAttack in the party. `reload all` (typed or by `/tell`): says `/p aa reload`, so the whole party reloads, including the sender. After the reload each one answers in the same channel with `[AA] <name>: reloaded -- AutoAttack v<version>`. The reload stops AutoAttack, so send `fight` / `pull` / `assist` again afterwards. |
 | `update [all\|force]` | Downloads the newest release from GitHub (`thrydwolfvalefor/autoattack`, or `party.update_url` in aa_config.lua), checks every file, backs the current files up to `backups\`, installs the new ones, replies `downloaded v<new> -- reloading...`, reloads, then replies `updated and reloaded -- AutoAttack v<new> (was v<old>)` (v4.62). Only `autoattack.lua`, `aa_party.lua`, `aa_config_defaults.lua` and `README.md` are replaced; your `aa_config.lua`, `data\` and logs are never touched. By `/tell`: that character; in party chat: every AutoAttack in the party; `update all`: the whole party. Already current: `already on v...`. `force` re-installs or allows an older version. Refused while fighting. `reload` only reloads the files already on the PC. Needs v4.64 or later (the v4.62 / v4.63 updater was broken). |
-| `pull [dir]`, `assist`, `ws on\|off`, `move <mode>`, `ds [clear]`, `gsc on\|off\|auto` | Same as the `//aa` command. `pull` / `assist` switch the running mode if AutoAttack is already on. Each one answers the sender (v4.69): `ws` / `move` / `ds` send back what the command printed (e.g. `[AA] Scracheebrat: Weapon skills OFF (until aa ws on or the addon is reloaded).`, at most 5 lines); `pull` / `assist` say `switched to PULL mode (was ASSIST)`, `already in PULL mode`, `started PULL mode` or `couldn't start PULL mode`. A `/tell` is answered by tell; a party-chat command is answered in party by everyone except the character that sent it. `ws off` / `move` last until `ws on` / another `move` or a reload. |
+| `pull [dir]`, `assist`, `ws on\|off`, `move <mode>`, `ds [clear]`, `gsc on\|off\|auto\|?` | Same as the `//aa` command. `pull` / `assist` switch the running mode if AutoAttack is already on. Each one answers the sender (v4.69): `ws` / `move` / `ds` send back what the command printed (e.g. `[AA] Scracheebrat: Weapon skills OFF (until aa ws on or the addon is reloaded).`, at most 5 lines); `pull` / `assist` say `switched to PULL mode (was ASSIST)`, `already in PULL mode`, `started PULL mode` or `couldn't start PULL mode`. A `/tell` is answered by tell; a party-chat command is answered in party by everyone except the character that sent it. `ws off` / `move` last until `ws on` / another `move` or a reload. |
 
 **Settings** (`party = {...}` in aa_config.lua): `enabled`, `friends`, `party_range` (1), `stack_precision` (0.3), `follow_range` (1), `stack_timeout` (30s), `stack_wait` (5s), `trust_wait` (120s), `finish_timeout` (300s: an invite or retrust is cancelled if the party is still fighting after this), `reply_timeout` (8s), `auto_accept` (true: invites from friends are accepted), `mount` ('Raptor'), `warp_ring` ('Warp Ring'), `warp_ring_delay` (11s), `warp_claim_wait` (3s), `warp_wait` (90s), `retr_command` ('/retr all').
 
@@ -278,6 +278,8 @@ The settings you change most live in their own file, so you never have to dig th
 | File | What it is |
 |---|---|
 | `aa_config.lua` | **Your settings.** `mob_whitelist`, `mob_blacklist`, `domain_invasion`, `elemental_farming`, `master_pull_method`, `ws_mode`, `heal_buff_outside_battle`, `move_to_target`, and the whole `job_config` table (trusts, pull, abilities, magic, weapon skills, rings, food for every job). Edit this one. |
+| `aa_knowledge.lua` | **Shipped group skillchain knowledge** (v4.90): learned WS, skillchain and magic burst damage for the group, merged from everyone's learning when a release is built. Read only; `aa update` replaces it. |
+| `data/aa_learned_<Character>.lua` | **This character's learning** (v4.90). Written by AutoAttack as it plays (and from what teammates send); never shipped and never replaced by `aa update`. |
 | `aa_config_defaults.lua` | **Shipped safe defaults.** Don't edit it. Whitelist empty, Domain Invasion / elemental farming off, standard blacklist, no `master_pull_method` overrides, every job's `PullNext_OnLowHP = false`, `ws_mode` `"Normal"` with lockout `"true"`, `heal_buff_outside_battle = false`, `move_to_target = 'off'`. |
 
 * If `aa_config.lua` is missing, AutoAttack copies the defaults file to `aa_config.lua` on load. To start over, delete `aa_config.lua` and reload.
@@ -533,11 +535,29 @@ When another player is in the party (`group_skillchain.min_players`, default 2 w
 * **Light on Light ends the chain** (v4.72): a Light made from two Light-property WS (e.g. Ukko's Fury and Fudo) can't be continued, so the next opener goes instead. A Light made from Fusion + Fragmentation can take one more Light WS.
 * **Damage model** (v4.72): each WS is worth its own damage plus the skillchain damage it closes (`power` / `sc_power`, built in from logs: Light closed by Savage Blade 32k, Upheaval 25k, Ukko's Fury 25k, Shoha 16k).
 * **Turn order** (v4.73): a teammate placed ahead of you keeps the turn from `block_tp` (500 TP), because you see their TP a moment late.
-* **Per-player lists** (v4.73): `players = {Scracheebrat = {'Savage Blade'}}` gives a teammate's exact WS list instead of `pools[weapon]`. Your own list is always read from the game; teammates' lists can't be, so this (or `pools`) is what the others plan with.
+* **Per-player lists** (v4.73): `players = {Scracheebrat = {'Savage Blade'}}` gives a teammate's exact WS list instead of `pools[weapon]`. Your own list is always read from the game. Since v4.90 a teammate's profile (below) is used when they send one; this list overrides only when you set it.
 * **No-shows** (v4.71): a teammate who passes on a planned WS `noshow_max` times (3) stops being planned for it this session.
 * **TP bank** (v4.71): no new chain on a mob at or under `bank_hpp` % HP (10) unless you have 2000+ TP; that TP opens the next mob.
 * `//aa gsc` shows what it sees (players, jobs, weapons, TP, pools, last chain). `//aa gsc on|off` overrides `enabled` for this session; `//aa gsc auto` goes back to the config. Also by tell or party chat: `aa gsc off`.
 * Only with `ws_mode.type = "Normal"`; AoE / Odin / other modes still use `ws_list`.
+
+### Dynamic group skillchain (v4.90)
+
+Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack plans his Rudra's Storm / Evisceration / Exenterator.
+
+* **Skillchain properties** come from Windower's own weapon skill list, so every weapon skill works. The built-in table only corrects it.
+* **Profiles.** Each AutoAttack sends its job, level, weapon and the weapon skills it will use in a hidden party line (`aa~g p ...`, never shown in the chat window):
+  * on `aa fight`, when a player joins, after zoning, and on `aa gsc ?`;
+  * when your job or main-hand weapon changes while you're idle, after it stays that way `weapon_hold` seconds (3). Swaps mid-fight (Abyssea red-procs) and Dread Spikes weapons are ignored.
+  * Lines go out 1.5 seconds apart by party slot, so four players never post at once.
+  * A teammate's profile comes before the `job_weapons` / `pools` guesses. Without one, the weapon skills you see them use are added to their list.
+* **Learning.** Every AutoAttack learns, for every player in the party (Vayne included): each WS's damage, the skillchain damage each closing WS makes (as Light-equivalent) and magic burst damage. It's saved to `data/aa_learned_<Character>.lua` every 2 minutes, on zoning, logout and unload.
+  * `aa_knowledge.lua` is the master. At load both files are read; for each entry the one with more samples wins.
+  * The plan uses learned damage first (that player's, then the party's, after `learn_min` samples), then the built-in figures. Each skillchain also counts the fillers' learned magic burst x `mb_weight`.
+* **Sharing.** On `aa fight` and when a player joins, every AutoAttack posts a short digest (`aa~g d`). Whoever knows the most about a player sends those entries (`aa~g k`), and the others take any entry with more samples than theirs.
+* **Master file.** When a release is built on MarksPC, `make_release.py` merges `aa_knowledge.lua` and every `data/aa_learned_*.lua` into a new `aa_knowledge.lua` and ships it; `aa update` downloads it (`extra=` in `manifest.txt`).
+* `//aa gsc` marks players whose profile it has with `(profile)`. `//aa gsc k` lists what is learned for the party, `//aa gsc sync` compares now, `//aa gsc save` writes the learning file, `//aa gsc ?` (or `/p aa gsc ?`) re-sends profiles.
+* Settings in `group_skillchain`: `announce`, `learn`, `sync` (all true), `learn_min` 3, `learn_cap` 200 (plain average, then rolling), `pool_max` 6, `weapon_hold` 3, `mb_weight` 0.5, `sync_min` 5.
 
 ### `ring_config`
 

@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.89'
+_addon.version  = '4.90'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -3928,6 +3928,7 @@ end
 windower.register_event('unload', function()
     if mv and mv.active then windower.ffxi.run(false) end
     if ds_leave then pcall(ds_leave, 'unloaded') end  -- v4.32: give GearSwap its slots back
+    pcall(gsc_k_save)   -- v4.90: keep what this session learned
     aa_log_close()  -- v4.25
 end)
 
@@ -5044,6 +5045,9 @@ GSC_DEF = {
         ['Staff']        = {'Shattersoul', 'Cataclysm', 'Retribution'},
     },
     power = {}, sc_power = {}, players = {},
+    -- v4.90: profiles, learning, knowledge sync
+    announce = true, learn = true, sync = true, learn_min = 3, learn_cap = 200, learn_save_secs = 120,
+    sync_min = 5, pool_max = 6, weapon_hold = 3, mb_weight = 0.5,
 }
 GSC = {on = nil, chain = nil, jobs = {}, began = {}, pre_done = {}, pre_n = 0, mob = 0, mob_since = 0,
        fired_at = 0, said = {}, ids = {}, ids_at = -10, act_at = -10, act_val = false, act_last = nil,
@@ -5062,27 +5066,30 @@ function gsc_dbg(key, msg)
     GSC.said[key] = msg
     debug_msg(msg)
 end
-function gsc_power(ws)
+function gsc_power(ws, who)
     local p = gsc_cfg('power')
     local v = type(p) == 'table' and tonumber(p[ws]) or nil
-    return v or GSC_POWER[ws] or 6
+    return v or gsc_k_value('ws', who, ws) or GSC_POWER[ws] or 6   -- v4.90: learned damage
 end
 -- v4.72: Light skillchain damage when this WS closes it
-function gsc_scpower(ws)
+function gsc_scpower(ws, who)
     local p = gsc_cfg('sc_power')
     local v = type(p) == 'table' and tonumber(p[ws]) or nil
-    return v or GSC_SCPOWER[ws] or 18
+    return v or gsc_k_value('sc', who, ws) or GSC_SCPOWER[ws] or 18   -- v4.90: learned
 end
 -- v4.72: damage of a WS that makes skillchain r (level l, term = chain ends)
-function gsc_value(ws, l, term)
-    return gsc_power(ws) + gsc_scpower(ws) * (term and GSC_MULT['end'] or (GSC_MULT[l] or 0))
+function gsc_value(ws, l, term, who)
+    -- v4.90: who = the player (their learned damage); each skillchain also
+    -- gives the fillers a magic burst (GSC_MBV, from gsc_members)
+    return gsc_power(ws, who) + gsc_scpower(ws, who) * (term and GSC_MULT['end'] or (GSC_MULT[l] or 0))
+        + (((l or 0) > 0) and (GSC_MBV or 0) or 0)
 end
 -- best skillchain this WS makes on a resonance (list of properties): name, level,
 -- term. v4.72: term = true when it is Light on Light (or Darkness on Darkness):
 -- the 11-18 logs show a Light made that way is never continued (1 of 156),
 -- while a Light made from Fusion + Fragmentation continues ~80% of the time.
 function gsc_result(props, ws)
-    local wp = GSC_WS[ws]
+    local wp = gsc_props(ws)
     if not wp or type(props) ~= 'table' then return nil, 0, false end
     local best, bl, term = nil, 0, false
     for _, a in ipairs(props) do
@@ -5140,6 +5147,10 @@ function gsc_weapon(name, job, isme)
         local w = it and GSC_SKILL[it.skill]
         if w then return w end
     end
+    if not isme and name and GSC_P then   -- v4.90: what they told us
+        local pr = GSC_P.prof[name:lower()]
+        if pr and pr.weapon then return pr.weapon end
+    end
     local jw = gsc_cfg('job_weapons')
     if job and type(jw) == 'table' and jw[job] then return jw[job] end
     local nw = gsc_cfg('weapons')
@@ -5164,10 +5175,22 @@ function gsc_pool(weapon, isme, id, name)
     local pools = gsc_cfg('pools')
     local list = (type(pools) == 'table' and weapon and pools[weapon]) or {}
     -- v4.73: players = {Name = {'WS', ...}} replaces the weapon pool for that player
-    local pp = gsc_cfg('players')
+    local pp, explicit = gsc_cfg('players'), false   -- v4.90: explicit = set by hand, kept exact
     if type(pp) == 'table' and name then
         for k, v in pairs(pp) do
-            if type(k) == 'string' and k:lower() == name:lower() and type(v) == 'table' and #v > 0 then list = v end
+            if type(k) == 'string' and k:lower() == name:lower() and type(v) == 'table' and #v > 0 then list = v; explicit = true end
+        end
+    end
+    if not isme and name and GSC_P then   -- v4.90: their profile, else add what we saw them use
+        local key = name:lower()
+        local pr = GSC_P.prof[key]
+        if pr and #pr.ws > 0 then
+            list = pr.ws
+        elseif GSC_P.seen[key] and not explicit then
+            local have, l2 = {}, {}
+            for _, ws in ipairs(list) do have[ws] = true; l2[#l2 + 1] = ws end
+            for ws in pairs(GSC_P.seen[key]) do if not have[ws] and gsc_props(ws) then l2[#l2 + 1] = ws end end
+            list = l2
         end
     end
     if not isme then   -- v4.71: minus WS this player passed on noshow_max times
@@ -5178,14 +5201,15 @@ function gsc_pool(weapon, isme, id, name)
         return out
     end
     local learned, out = gsc_learned(), {}
-    for _, ws in ipairs(list) do if learned[ws] and GSC_WS[ws] then out[#out + 1] = ws end end
+    for _, ws in ipairs(list) do if learned[ws] and gsc_props(ws) then out[#out + 1] = ws end end
     if #out == 0 and weapon then   -- none from the pool: anything you know for this weapon
         local sk
         for id, nm in pairs(GSC_SKILL) do if nm == weapon then sk = id end end
         for ws, s in pairs(learned) do
-            if GSC_WS[ws] and s == sk then out[#out + 1] = ws end
+            if gsc_props(ws) and s == sk then out[#out + 1] = ws end
         end
-        table.sort(out, function(a, b) return gsc_power(a) > gsc_power(b) end)
+        table.sort(out, function(a, b) return gsc_power(a, name) > gsc_power(b, name) end)
+        out = gsc_prune(out, name)   -- v4.90: any weapon -- the strongest pool_max
     end
     return out
 end
@@ -5200,7 +5224,8 @@ function gsc_members()
         if m and m.name and mob and mob.id and mob.is_npc ~= true and mob.spawn_type ~= 14 then
             n = n + 1
             local isme = mob.id == pl.id
-            local job = isme and pl.main_job or GSC.jobs[mob.id]
+            local _pr = GSC_P and GSC_P.prof[m.name:lower()]   -- v4.90
+            local job = isme and pl.main_job or GSC.jobs[mob.id] or (_pr and _pr.job)
             local weapon = gsc_weapon(m.name, job, isme)
             out[#out + 1] = {id = mob.id, name = m.name, job = job, me = isme, weapon = weapon,
                 tp = (isme and pl.vitals and pl.vitals.tp) or m.tp or 0,
@@ -5208,6 +5233,12 @@ function gsc_members()
                 filler = gsc_is_filler(job, m.name), pool = gsc_pool(weapon, isme, mob.id, m.name)}
         end
     end
+    -- v4.90: what one skillchain is worth to the fillers' magic bursts (learned)
+    local mbv = 0
+    for _, x in ipairs(out) do
+        if x.filler and x.engaged then mbv = mbv + (gsc_k_value('mb', x.name, 'MB') or 0) end
+    end
+    GSC_MBV = mbv * gsc_num('mb_weight')
     return out, n
 end
 function gsc_active()
@@ -5247,7 +5278,7 @@ function gsc_follow(props, depth, prev_id, mem, step)
             for _, ws in ipairs(m.pool) do
                 local r, l, term = gsc_result(props, ws)
                 if r then
-                    local v = gsc_value(ws, l, term) - (m.filler and 2 or 0)
+                    local v = gsc_value(ws, l, term, m.name) - (m.filler and 2 or 0)
                         + (term and 0 or 0.8 * gsc_follow({r}, depth - 1, m.id, mem, step + 1))
                     if v > best then best = v end
                 end
@@ -5275,7 +5306,7 @@ function gsc_continuers(mem, props, last_actor)
                 if r then
                     -- same value as the opener plan (damage of this WS and its skillchain,
                     -- plus what can still follow), plus a little for being ready now
-                    local key = gsc_value(ws, l, term) - (m.filler and 2 or 0) + ((m.tp >= 1000) and 2 or 0)
+                    local key = gsc_value(ws, l, term, m.name) - (m.filler and 2 or 0) + ((m.tp >= 1000) and 2 or 0)
                         + (term and 0 or 0.8 * gsc_follow({r}, gsc_num('plan_depth') - 1, m.id, mem, 2))
                     -- v4.71: the player who made the last WS goes after everyone else: the
                     -- others see their TP a moment late and would go at the same time
@@ -5298,7 +5329,7 @@ function gsc_openers(mem)
         if m.engaged and not m.filler and (m.tp >= 1000 or (not m.me and m.tp >= gsc_num('block_tp'))) then
             local best
             for _, ws in ipairs(m.pool) do
-                local key = gsc_follow(GSC_WS[ws], gsc_num('plan_depth'), m.id, mem, 1) + gsc_power(ws)
+                local key = gsc_follow(gsc_props(ws), gsc_num('plan_depth'), m.id, mem, 1) + gsc_power(ws, m.name)
                 if not best or key > best.key then best = {m = m, ws = ws, key = key} end
             end
             if best then out[#out + 1] = best end
@@ -5462,7 +5493,7 @@ function gsc_tick()
         end
         local best, bk = nil, -1
         for _, ws in ipairs(me.pool) do
-            local k = gsc_follow(GSC_WS[ws], gsc_num('plan_depth'), me.id, mem, 2) + 0.1 * gsc_power(ws)
+            local k = gsc_follow(gsc_props(ws), gsc_num('plan_depth'), me.id, mem, 2) + 0.1 * gsc_power(ws)
             if k > bk then best, bk = ws, k end
         end
         if best then return gsc_fire(t, best, best .. ' (filler -- no chain to wait for)') end
@@ -5485,6 +5516,7 @@ end
 function gsc_on_action(act)
     if not act or not act.actor_id or type(act.targets) ~= 'table' then return end
     local cat = act.category
+    if cat == 4 then pcall(gsc_learn_mb, act); return end   -- v4.90: magic bursts
     if cat ~= 3 and cat ~= 7 and cat ~= 11 then return end
     if not gsc_party_ids()[act.actor_id] then return end
     local now = os.clock()
@@ -5498,7 +5530,8 @@ function gsc_on_action(act)
     if not t1 or not t1.id or not a1 or t1.id == act.actor_id then return end
     local r = (cat == 3) and res.weapon_skills[act.param] or res.monster_abilities[act.param]
     local name = r and r.en
-    local props = name and GSC_WS[name]
+    local props = name and gsc_props(name)
+    if cat == 3 and name then pcall(gsc_learn_ws, act, name, a1) end   -- v4.90
     if cat == 3 and name then   -- someone's once_per_mob WS landed on this mob
         local pre = gsc_cfg('once_per_mob')
         for _, pw in pairs(type(pre) == 'table' and pre or {}) do
@@ -5534,6 +5567,7 @@ function gsc_on_action(act)
         -- v4.72: Light made on Light (Darkness on Darkness) can't be continued
         local _, _, term = gsc_result((c and c.target == t1.id) and c.props or {}, name)
         local ends = term and (sc == 'Light' or sc == 'Darkness')
+        if cat == 3 then pcall(gsc_learn_sc, act, name, a1, sc, ends) end   -- v4.90
         GSC.chain = {target = t1.id, t = now, props = ends and {} or {sc}, step = step,
                      label = ends and (sc .. ' (end)') or sc, actor = act.actor_id}
         -- v4.76: one line per step, with who closed it (Mark: one line to spot the SC damage)
@@ -5550,8 +5584,21 @@ function gsc_command(arg)
     if a == 'on' then GSC.on = true; GSC.act_at = -10
     elseif a == 'off' then GSC.on = false; GSC.act_at = -10
     elseif a == 'auto' or a == 'config' then GSC.on = nil; GSC.act_at = -10
+    elseif a == '?' then   -- v4.90: send our profile again (every AA does on "/p aa gsc ?")
+        gsc_announce('asked (aa gsc ?)', 0.5 + gsc_slot() * 1.5, true)
+    elseif a == 'k' or a == 'knowledge' then
+        for _, l in ipairs(gsc_knowledge_lines()) do windower.add_to_chat(8, '[AutoAttack]  ' .. l) end
+        return
+    elseif a == 'sync' then
+        gsc_sync_start('aa gsc sync', 0.5 + gsc_slot() * 1.5)
+        windower.add_to_chat(8, '[AutoAttack] Group skillchain: comparing learned damage with the party.')
+        return
+    elseif a == 'save' then
+        GSC_KS.dirty = true; gsc_k_save()
+        windower.add_to_chat(8, '[AutoAttack] Group skillchain: learning saved to ' .. gsc_k_path(GSC_KS.char or '?'))
+        return
     elseif a then
-        windower.add_to_chat(8, '[AutoAttack] Usage: //aa gsc [on|off|auto]')
+        windower.add_to_chat(8, '[AutoAttack] Usage: //aa gsc [on|off|auto|?|k|sync|save]')
         return
     end
     local mem, n = gsc_members()
@@ -5560,7 +5607,8 @@ function gsc_command(arg)
     windower.add_to_chat(8, '[AutoAttack] Group skillchain ' .. state .. ' -- ' .. n .. ' player(s), ' ..
         (gsc_active() and 'ACTIVE.' or 'not active.'))
     for _, m in ipairs(mem) do
-        windower.add_to_chat(8, string.format('[AutoAttack]  %s %s %s %s TP %d%s: %s', m.name, tostring(m.job or '?'),
+        windower.add_to_chat(8, string.format('[AutoAttack]  %s %s %s %s TP %d%s: %s',
+            m.name .. ((not m.me and GSC_P.prof[m.name:lower()]) and ' (profile)' or ''), tostring(m.job or '?'),
             tostring(m.weapon or '?'), m.engaged and 'engaged' or 'idle', m.tp, m.filler and ' (filler)' or '',
             (#m.pool > 0) and table.concat(m.pool, ', ') or 'no WS'))
     end
@@ -5569,6 +5617,557 @@ function gsc_command(arg)
         windower.add_to_chat(8, string.format('[AutoAttack]  last: %s, %.1fs ago, step %d.', tostring(c.label),
             os.clock() - c.t, c.step or 1))
     end
+end
+
+
+-- =========================================================================
+-- v4.90: DYNAMIC GROUP SKILLCHAIN (Mark, 2026-11-20: "any of our 4 friends
+-- may have different jobs and weapons ... scan the players in the party for
+-- jobs, weapons, weaponskills, and then determine a plan for most damage")
+-- * Skillchain properties come from Windower's res.weapon_skills
+--   (skillchain_a/b/c), so every weapon works. GSC_WS above only overrides.
+-- * PROFILES: each AA says its job, level, weapon and the WS it brings in a
+--   hidden party line ("aa~g p ..."): on aa fight, when a player joins, after
+--   zoning, on "aa gsc ?", and when its job / main hand changes while idle
+--   (held weapon_hold s; Dread Spikes and mid-fight swaps such as Abyssea
+--   red-proc weapons are ignored). A teammate's profile comes before the
+--   job_weapons / pools guesses; without one, the WS we see them use are added.
+-- * KNOWLEDGE: every AA learns each player's WS damage, the skillchain damage
+--   each closing WS makes (as Light-equivalent) and magic burst damage.
+--     aa_knowledge.lua                 master: shipped, read only, aa update replaces it
+--     data/aa_learned_<Character>.lua  this character's learning, never shipped
+--   Both are read at load; per entry the one with more samples wins.
+--   On aa fight / a join every AA sends a digest ("aa~g d"); whoever knows the
+--   most about a player sends those entries ("aa~g k"), merged the same way.
+--   The release merges Shadow's (and every other) learning file on MarksPC
+--   into aa_knowledge.lua, so aa update hands it to everyone.
+-- * The plan values a WS by learned damage first (this player's, then the
+--   party's), then the built-in tables; every skillchain step adds the
+--   party's fillers' learned magic burst damage x mb_weight.
+-- Hidden lines: aa_party.lua keeps every "aa~g" line out of the chat window.
+-- Globals on purpose (main chunk is at the local / upvalue limit).
+-- =========================================================================
+GSC_PROTO = 1
+GSC_KINDS = {'ws', 'sc', 'mb'}
+GSC_RESPROPS, GSC_WSID = nil, nil
+GSC_MBV = 0
+GSC_K  = {ws = {}, sc = {}, mb = {}}
+GSC_KS = {char = nil, dirty = false, saved = 0, base_ver = nil}
+GSC_P  = {prof = {}, seen = {}, sent = -100, pend = nil, sig = nil, sig_at = 0, sig_sent = nil,
+          dig = {}, dig_mine_at = -100, dig_eval = nil, watch_at = 0}
+
+-- skillchain properties of a WS: GSC_WS override, else Windower's resources
+function gsc_props(name)
+    if not name then return nil end
+    local o = GSC_WS[name]
+    if o then return o end
+    if not GSC_RESPROPS then
+        GSC_RESPROPS, GSC_WSID = {}, {}
+        for id, r in pairs(res.weapon_skills or {}) do
+            if type(r) == 'table' and type(r.en) == 'string' then
+                GSC_WSID[r.en] = tonumber(r.id) or id
+                local l = {}
+                for _, k in ipairs({'skillchain_a', 'skillchain_b', 'skillchain_c'}) do
+                    local v = r[k]
+                    if type(v) == 'string' and GSC_LEVEL[v] then l[#l + 1] = v end
+                end
+                if #l > 0 then GSC_RESPROPS[r.en] = l end
+            end
+        end
+    end
+    return GSC_RESPROPS[name]
+end
+function gsc_ws_id(name)
+    if not GSC_WSID then gsc_props('-') end
+    return GSC_WSID[name]
+end
+function gsc_ws_name(id)
+    local r = id and res.weapon_skills[id]
+    return r and r.en
+end
+function gsc_ws_level(ws)
+    local l = 0
+    for _, x in ipairs(gsc_props(ws) or {}) do l = math.max(l, GSC_LEVEL[x] or 0) end
+    return l
+end
+
+-- ---------------------------------------------------------------- knowledge
+function gsc_k_path(name)
+    local dir = windower.addon_path or ''
+    if not name then return dir .. 'aa_knowledge.lua' end
+    return dir .. 'data/aa_learned_' .. name .. '.lua'
+end
+function gsc_k_read(path)
+    local fh = io.open(path, 'rb')
+    if not fh then return nil end
+    local s = fh:read('*a')
+    fh:close()
+    local f = loadstring(s, '=' .. path)
+    if not f then return nil end
+    setfenv(f, {})
+    local ok, t = pcall(f)
+    if ok and type(t) == 'table' then return t end
+    return nil
+end
+-- merge src into dst: per entry the one with more samples wins (tie: newer)
+function gsc_k_merge(dst, src)
+    local changed = 0
+    for _, kind in ipairs(GSC_KINDS) do
+        dst[kind] = dst[kind] or {}
+        for who, tw in pairs(type(src[kind]) == 'table' and src[kind] or {}) do
+            if type(who) == 'string' and type(tw) == 'table' then
+                local dw = dst[kind][who] or {}
+                dst[kind][who] = dw
+                for key, e in pairs(tw) do
+                    local n = type(e) == 'table' and tonumber(e.n)
+                    local a = type(e) == 'table' and tonumber(e.a)
+                    if type(key) == 'string' and n and a and n > 0 then
+                        local d, t = dw[key], tonumber(e.t) or 0
+                        if not d or n > d.n or (n == d.n and t > (d.t or 0)) then
+                            dw[key] = {n = n, a = a, t = t}
+                            changed = changed + 1
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return changed
+end
+-- load the master + this character's learning (again when the character changes)
+function gsc_k_ensure()
+    local pl = windower.ffxi.get_player()
+    local name = pl and pl.name
+    if not name or name == GSC_KS.char then return end
+    if GSC_KS.char and GSC_KS.dirty then gsc_k_save() end
+    GSC_K = {ws = {}, sc = {}, mb = {}}
+    local base = gsc_k_read(gsc_k_path(nil))
+    if base then gsc_k_merge(GSC_K, base) end
+    local own = gsc_k_read(gsc_k_path(name))
+    if own then gsc_k_merge(GSC_K, own) end
+    GSC_KS.char, GSC_KS.dirty, GSC_KS.saved = name, false, os.clock()
+    GSC_KS.base_ver = base and base.version or nil
+    local n = 0
+    for _, v in pairs(gsc_k_totals()) do n = n + v end
+    debug_msg('GSC: knowledge loaded for ' .. name .. ' -- master ' .. (base and ('v' .. tostring(base.version)) or 'missing') ..
+              ', own file ' .. (own and 'found' or 'new') .. ', ' .. n .. ' samples.')
+end
+function gsc_k_write(path, K, what)
+    local ver = tostring(_addon and _addon.version or '?')
+    local out = {'-- AutoAttack ' .. what .. ' -- written by AutoAttack v' .. ver .. ' on ' .. os.date('%Y-%m-%d %H:%M'),
+                 '-- [kind][player][weapon skill] = {n = samples, a = average (thousands), t = last update}',
+                 '-- ws = WS damage; sc = skillchain damage when this WS closes it, as Light-equivalent',
+                 '-- (Light 1.0, level 2 0.55, level 1 0.25, Light on Light 1.4); mb = magic bursts',
+                 'return {', string.format('version = %q,', ver)}
+    for _, kind in ipairs(GSC_KINDS) do
+        out[#out + 1] = kind .. ' = {'
+        local whos = {}
+        for w in pairs(K[kind] or {}) do whos[#whos + 1] = w end
+        table.sort(whos)
+        for _, w in ipairs(whos) do
+            out[#out + 1] = string.format('  [%q] = {', w)
+            local keys = {}
+            for k in pairs(K[kind][w]) do keys[#keys + 1] = k end
+            table.sort(keys)
+            for _, k in ipairs(keys) do
+                local e = K[kind][w][k]
+                out[#out + 1] = string.format('    [%q] = {n = %d, a = %.3f, t = %d},', k, e.n, e.a, e.t or 0)
+            end
+            out[#out + 1] = '  },'
+        end
+        out[#out + 1] = '},'
+    end
+    out[#out + 1] = '}'
+    local fh = io.open(path, 'wb')
+    if not fh then return false end
+    fh:write(table.concat(out, '\n') .. '\n')
+    fh:close()
+    return true
+end
+function gsc_k_save()
+    if not GSC_KS.char or not GSC_KS.dirty then return end
+    local dir = (windower.addon_path or '') .. 'data'
+    if windower.dir_exists and windower.create_dir and not windower.dir_exists(dir) then windower.create_dir(dir) end
+    if gsc_k_write(gsc_k_path(GSC_KS.char), GSC_K, 'learning for ' .. GSC_KS.char) then
+        GSC_KS.dirty = false
+    else
+        debug_msg('GSC: could not write ' .. gsc_k_path(GSC_KS.char))
+    end
+    GSC_KS.saved = os.clock()
+end
+function gsc_k_add(kind, who, key, x)
+    if gsc_cfg('learn') == false or not who or not key or not x or x <= 0 then return end
+    gsc_k_ensure()
+    local K = GSC_K[kind]
+    if not K then return end
+    local tw = K[who]
+    if not tw then tw = {}; K[who] = tw end
+    local e = tw[key]
+    if not e then e = {n = 0, a = 0, t = 0}; tw[key] = e end
+    e.n = e.n + 1
+    -- a plain average up to learn_cap samples, then a rolling one (gear changes)
+    e.a = e.a + (x - e.a) / math.min(e.n, math.max(gsc_num('learn_cap'), 1))
+    e.t = os.time()
+    GSC_KS.dirty = true
+    if os.clock() - GSC_KS.saved > gsc_num('learn_save_secs') then gsc_k_save() end
+end
+-- learned value: this player's (learn_min+ samples), else every player's together, else nil
+function gsc_k_value(kind, who, key)
+    local K = GSC_K[kind]
+    if not K or not key then return nil end
+    local mn = math.max(gsc_num('learn_min'), 1)
+    local e = who and K[who] and K[who][key]
+    if e and e.n >= mn then return e.a end
+    local n, s = 0, 0
+    for _, tw in pairs(K) do
+        local x = tw[key]
+        if x and x.n > 0 then n = n + x.n; s = s + x.a * x.n end
+    end
+    if n >= mn then return s / n end
+    return nil
+end
+function gsc_k_totals()
+    local tot = {}
+    for _, kind in ipairs(GSC_KINDS) do
+        for who, tw in pairs(GSC_K[kind] or {}) do
+            for _, e in pairs(tw) do tot[who] = (tot[who] or 0) + e.n end
+        end
+    end
+    return tot
+end
+-- a real player in our party (not a Trust): name, else nil
+function gsc_player_name(id)
+    if not id or not gsc_party_ids()[id] then return nil end
+    local m = windower.ffxi.get_mob_by_id(id)
+    if not m or not m.name or m.is_npc or m.spawn_type == 14 then return nil end
+    return m.name
+end
+-- WS landed (cat 3): its damage, and the WS seen for players without a profile
+function gsc_learn_ws(act, name, a1)
+    local who = gsc_player_name(act.actor_id)
+    if not who then return end
+    local key = who:lower()
+    if not GSC_P.prof[key] then
+        GSC_P.seen[key] = GSC_P.seen[key] or {}
+        GSC_P.seen[key][name] = true
+    end
+    if a1.message ~= 188 and (tonumber(a1.param) or 0) > 0 then gsc_k_add('ws', who, name, a1.param / 1000) end
+end
+-- skillchain damage, as Light-equivalent, credited to the closing WS
+function gsc_learn_sc(act, name, a1, sc, ends)
+    local who = gsc_player_name(act.actor_id)
+    local dmg = tonumber(a1.add_effect_param) or 0
+    if not who or dmg <= 0 then return end
+    local mult = ends and GSC_MULT['end'] or GSC_MULT[GSC_LEVEL[sc] or 0]
+    if mult and mult > 0 then gsc_k_add('sc', who, name, dmg / 1000 / mult) end
+end
+-- magic burst damage by a party player (spell, message 252)
+function gsc_learn_mb(act)
+    local who = gsc_player_name(act.actor_id)
+    if not who then return end
+    local t1 = act.targets[1]
+    local a1 = t1 and type(t1.actions) == 'table' and t1.actions[1]
+    if a1 and a1.message == 252 and (tonumber(a1.param) or 0) > 0 then gsc_k_add('mb', who, 'MB', a1.param / 1000) end
+end
+
+-- ----------------------------------------------------------------- profiles
+function gsc_prune(list, who)
+    local mx = gsc_num('pool_max')
+    if mx <= 0 or #list <= mx then return list end
+    local key, out = {}, {}
+    for _, ws in ipairs(list) do key[ws] = gsc_ws_level(ws) * 10 + gsc_power(ws, who); out[#out + 1] = ws end
+    table.sort(out, function(a, b) return key[a] > key[b] end)
+    for i = #out, mx + 1, -1 do out[i] = nil end
+    return out
+end
+function gsc_is_trust_slot(m)
+    return m.mob and (m.mob.is_npc == true or m.mob.spawn_type == 14)
+end
+-- our place among the party's players (0 = first): staggers our lines
+function gsc_slot()
+    local party, pl = windower.ffxi.get_party(), windower.ffxi.get_player()
+    local k = 0
+    for i = 0, 5 do
+        local m = party and party['p' .. i]
+        if m and m.name and not gsc_is_trust_slot(m) then
+            if pl and m.name == pl.name then return k end
+            k = k + 1
+        end
+    end
+    return 0
+end
+function gsc_has_players()
+    local party, n = windower.ffxi.get_party(), 0
+    for i = 0, 5 do
+        local m = party and party['p' .. i]
+        if m and m.name and not gsc_is_trust_slot(m) then n = n + 1 end
+    end
+    return n >= 2
+end
+function gsc_self_profile()
+    local pl = windower.ffxi.get_player()
+    if not pl then return nil end
+    local weapon = gsc_weapon(pl.name, pl.main_job, true)
+    local sk = 0
+    for id, nm in pairs(GSC_SKILL) do if nm == weapon then sk = id end end
+    local pool = gsc_pool(weapon, true, pl.id, pl.name)
+    local ids = {}
+    for _, ws in ipairs(pool) do
+        local id = gsc_ws_id(ws)
+        if id then ids[#ids + 1] = id end
+    end
+    return {job = pl.main_job or '-', sub = pl.sub_job or '-', lvl = tonumber(pl.main_job_level) or 0,
+            skill = sk, weapon = weapon, ids = ids, ws = pool}
+end
+function gsc_prof_sig(p)
+    return p.job .. '/' .. p.sub .. ' ' .. p.lvl .. ' ' .. p.skill .. ' ' .. table.concat(p.ids, ',')
+end
+function gsc_hash(s)
+    local h = 5381
+    for i = 1, #s do h = (h * 33 + s:byte(i)) % 65536 end
+    return string.format('%04x', h)
+end
+-- what this AA knows of the party's loadouts, as 4 hex digits (equal on every
+-- AA once everyone has everyone's profile)
+function gsc_view_hash()
+    local party, pl = windower.ffxi.get_party(), windower.ffxi.get_player()
+    local parts = {}
+    for i = 0, 5 do
+        local m = party and party['p' .. i]
+        if m and m.name and not gsc_is_trust_slot(m) then
+            local sig
+            if pl and m.name == pl.name then
+                local sp = gsc_self_profile()
+                sig = sp and gsc_prof_sig(sp)
+            else
+                local pr = GSC_P.prof[m.name:lower()]
+                sig = pr and pr.sig
+            end
+            parts[#parts + 1] = m.name:lower() .. '=' .. (sig or '?')
+        end
+    end
+    table.sort(parts)
+    return gsc_hash(table.concat(parts, ';'))
+end
+function gsc_party_line(line)
+    if aa_party_say then aa_party_say(line) else windower.send_command('input /p ' .. line) end
+end
+-- send our profile in delay s (one pending send; the sooner wins).
+-- force: send even if the same profile went out in the last 15s.
+function gsc_announce(why, delay, force)
+    if gsc_cfg('announce') == false then return end
+    delay = delay or 1
+    local due = os.clock() + delay
+    if GSC_P.pend and GSC_P.pend.due <= due then
+        GSC_P.pend.force = GSC_P.pend.force or force
+        return
+    end
+    local job = {due = due, force = force}
+    GSC_P.pend = job
+    coroutine.schedule(function()
+        if GSC_P.pend ~= job then return end
+        GSC_P.pend = nil
+        local ok, err = pcall(gsc_send_profile, why, job.force)
+        if not ok then debug_msg('GSC: profile send failed: ' .. tostring(err)) end
+    end, delay)
+end
+function gsc_send_profile(why, force)
+    if not gsc_has_players() then return end
+    local p = gsc_self_profile()
+    if not p then return end
+    local sig = gsc_prof_sig(p)
+    if not force and sig == GSC_P.sig_sent and os.clock() - GSC_P.sent < 15 then return end
+    GSC_P.sent, GSC_P.sig_sent, GSC_P.sig = os.clock(), sig, sig
+    gsc_party_line(string.format('aa~g p %d %s/%s %d %d %s %s', GSC_PROTO, p.job, p.sub, p.lvl, p.skill,
+        (#p.ids > 0) and table.concat(p.ids, ',') or '-', gsc_view_hash()))
+    debug_msg('GSC: profile sent (' .. tostring(why) .. '): ' .. p.job .. ' ' .. p.lvl .. ' ' ..
+              tostring(p.weapon or 'no weapon') .. ' -- ' .. ((#p.ws > 0) and table.concat(p.ws, ', ') or 'no WS'))
+end
+function gsc_on_profile(sender, rest)
+    local ver, job, sub, lvl, sk, ids, h = rest:match('^(%d+)%s+(%S+)/(%S+)%s+(%d+)%s+(%d+)%s+(%S+)%s*(%x*)')
+    if not ver then return end
+    sk = tonumber(sk)
+    local ws, idl = {}, {}
+    if ids ~= '-' then
+        for id in ids:gmatch('%d+') do
+            local n = gsc_ws_name(tonumber(id))
+            if n then ws[#ws + 1] = n; idl[#idl + 1] = tonumber(id) end
+        end
+    end
+    local p = {job = job, sub = sub, lvl = tonumber(lvl), skill = sk, weapon = GSC_SKILL[sk], ws = ws, ids = idl,
+               t = os.clock(), name = sender}
+    p.sig = job .. '/' .. sub .. ' ' .. lvl .. ' ' .. sk .. ' ' .. table.concat(idl, ',')
+    local key = sender:lower()
+    local old = GSC_P.prof[key]
+    GSC_P.prof[key] = p
+    GSC_P.seen[key] = nil
+    GSC.act_at = -10
+    if not old or old.sig ~= p.sig then
+        info_msg('GSC: ' .. sender .. ' -- ' .. job .. ' ' .. lvl .. ', ' .. tostring(p.weapon or 'no weapon') .. ': ' ..
+                 ((#ws > 0) and table.concat(ws, ', ') or 'no WS'))
+    end
+    -- they see the party differently from us: make sure they have ours
+    if h ~= '' and h ~= gsc_view_hash() and os.clock() - GSC_P.sent > 20 then
+        gsc_announce('their party view differs', 1 + gsc_slot() * 1.5, true)
+    end
+end
+-- once a second: our job / weapon / WS changed and stayed that way while idle -> announce
+function gsc_watch()
+    local now = os.clock()
+    if now < GSC_P.watch_at then return end
+    GSC_P.watch_at = now + 1
+    if gsc_cfg('announce') == false then return end
+    if ds_state and ds_state.on then return end   -- Dread Spikes weapon swap
+    if not gsc_has_players() then GSC_P.sig = nil; GSC_P.sig_sent = nil; return end
+    local pl = windower.ffxi.get_player()
+    if not pl or pl.status ~= 0 then return end    -- mid-fight swaps (red procs) don't count
+    local p = gsc_self_profile()
+    if not p or not p.weapon then return end
+    local sig = gsc_prof_sig(p)
+    if sig ~= GSC_P.sig then GSC_P.sig, GSC_P.sig_at = sig, now; return end
+    if sig ~= GSC_P.sig_sent and now - GSC_P.sig_at >= gsc_num('weapon_hold') and not GSC_P.pend then
+        gsc_announce(GSC_P.sig_sent and 'job / weapon change' or 'in a party', 0.5 + gsc_slot() * 1.5)
+    end
+end
+
+-- ---------------------------------------------------------------- knowledge sync
+function gsc_sync_start(why, delay)
+    if gsc_cfg('sync') == false then return end
+    GSC_P.dig_mine_at = os.clock() + (delay or 0)
+    coroutine.schedule(function()
+        local ok, err = pcall(gsc_send_digest, why)
+        if not ok then debug_msg('GSC: digest failed: ' .. tostring(err)) end
+    end, delay or 0)
+end
+function gsc_send_digest(why)
+    if not gsc_has_players() then return end
+    gsc_k_ensure()
+    local parts = {}
+    for who, n in pairs(gsc_k_totals()) do parts[#parts + 1] = who .. '=' .. n end
+    table.sort(parts)
+    local line = 'aa~g d ' .. ((#parts > 0) and table.concat(parts, ',') or '-')
+    while #line > 110 and line:find(',') do line = line:gsub(',[^,]*$', '') end
+    GSC_P.dig_mine_at = os.clock()
+    gsc_party_line(line)
+    debug_msg('GSC: knowledge digest sent (' .. tostring(why) .. '): ' .. line:sub(8))
+    local due = os.clock() + 8
+    GSC_P.dig_eval = due
+    coroutine.schedule(function()
+        if GSC_P.dig_eval ~= due then return end
+        local ok, err = pcall(gsc_sync_eval)
+        if not ok then debug_msg('GSC: sync failed: ' .. tostring(err)) end
+    end, 8)
+end
+function gsc_on_digest(sender, rest)
+    local d = {}
+    for who, n in rest:gmatch('(%a+)=(%d+)') do d[who] = tonumber(n) end
+    GSC_P.dig[sender:lower()] = {t = os.clock(), tot = d, name = sender}
+    -- a round we didn't start (we missed the join / aa fight): answer once
+    if os.clock() - GSC_P.dig_mine_at > 30 then gsc_sync_start('digest from ' .. sender, 1 + gsc_slot() * 1.5) end
+end
+-- for every player: if we know the most about them (digests from the last 30s;
+-- a tie goes to the name first in the alphabet), send our entries for them
+function gsc_sync_eval()
+    local now = os.clock()
+    local pl = windower.ffxi.get_player()
+    local mine, myname = gsc_k_totals(), (pl and pl.name or '?'):lower()
+    local others = {}
+    for k, d in pairs(GSC_P.dig) do
+        if now - d.t < 30 and k ~= myname then others[#others + 1] = d end
+    end
+    if #others == 0 then return {} end
+    local gap = math.max(gsc_num('sync_min'), 1)
+    local send = {}
+    for who, n in pairs(mine) do
+        local best, low, tie_lose = 0, math.huge, false
+        for _, d in ipairs(others) do
+            local x = d.tot[who] or 0
+            if x > best then best = x end
+            if x < low then low = x end
+            if x == n and d.name:lower() < myname then tie_lose = true end
+        end
+        if (n > best or (n == best and not tie_lose)) and n - low >= gap then send[#send + 1] = who end
+    end
+    table.sort(send)
+    for _, who in ipairs(send) do gsc_send_entries(who) end
+    return send
+end
+GSC_KCODE = {ws = 'w', sc = 's', mb = 'm'}
+GSC_KKIND = {w = 'ws', s = 'sc', m = 'mb'}
+function gsc_send_entries(who)
+    local items = {}
+    for _, kind in ipairs(GSC_KINDS) do
+        for key, e in pairs(GSC_K[kind][who] or {}) do
+            local id = (kind == 'mb') and 0 or gsc_ws_id(key)
+            if id then items[#items + 1] = string.format('%d%s%d:%.2f', id, GSC_KCODE[kind], e.n, e.a) end
+        end
+    end
+    table.sort(items)
+    local head = 'aa~g k ' .. who
+    local line, n = head, 0
+    for _, it in ipairs(items) do
+        if #line + 1 + #it > 110 then gsc_party_line(line); n = n + 1; line = head end
+        line = line .. ' ' .. it
+    end
+    if line ~= head then gsc_party_line(line); n = n + 1 end
+    debug_msg('GSC: sent ' .. #items .. ' learned entries for ' .. who .. ' (' .. n .. ' party lines).')
+end
+function gsc_on_entries(sender, rest)
+    local who, body = rest:match('^(%a+)%s+(.*)$')
+    if not who then return end
+    gsc_k_ensure()
+    local src = {ws = {[who] = {}}, sc = {[who] = {}}, mb = {[who] = {}}}
+    for id, c, n, a in body:gmatch('(%d+)([wsm])(%d+):([%d%.]+)') do
+        local key = (c == 'm') and 'MB' or gsc_ws_name(tonumber(id))
+        if key then src[GSC_KKIND[c]][who][key] = {n = tonumber(n), a = tonumber(a), t = 0} end
+    end
+    local ch = gsc_k_merge(GSC_K, src)
+    if ch > 0 then
+        GSC_KS.dirty = true
+        debug_msg('GSC: ' .. ch .. ' learned entries for ' .. who .. ' taken from ' .. sender .. '.')
+    end
+end
+-- "aa~g ..." party line from a friend in the party (aa_party.lua checks who sent it)
+function gsc_proto(sender, text)
+    local verb, rest = text:match('^[Aa][Aa]~[Gg]%s+(%a)%s*(.*)$')
+    if not verb or not sender then return end
+    verb = verb:lower()
+    if verb == 'p' then gsc_on_profile(sender, rest)
+    elseif verb == 'd' then gsc_on_digest(sender, rest)
+    elseif verb == 'k' then gsc_on_entries(sender, rest) end
+end
+-- aa_party.lua calls these (each AA waits by its place in the party: 1.5s apart)
+function gsc_on_fight()
+    local s = gsc_slot()
+    gsc_announce('aa fight', 1 + s * 1.5, true)
+    gsc_sync_start('aa fight', 9 + s * 1.5)
+end
+function gsc_on_join(name)
+    local s = gsc_slot()
+    gsc_announce(tostring(name) .. ' joined', 3 + s * 1.5, true)
+    gsc_sync_start(tostring(name) .. ' joined', 11 + s * 1.5)
+end
+function gsc_on_zone()
+    gsc_k_save()
+    gsc_announce('zoned', 20 + gsc_slot() * 1.5, true)
+end
+-- //aa gsc k: what we have learned about the party's players
+function gsc_knowledge_lines()
+    gsc_k_ensure()
+    local lines = {}
+    for _, m in ipairs((gsc_members())) do
+        local parts = {}
+        for ws, e in pairs(GSC_K.ws[m.name] or {}) do
+            local s = GSC_K.sc[m.name] and GSC_K.sc[m.name][ws]
+            parts[#parts + 1] = string.format('%s %.1fk x%d%s', ws, e.a, e.n,
+                s and string.format(' (SC %.1fk x%d)', s.a, s.n) or '')
+        end
+        local mb = GSC_K.mb[m.name] and GSC_K.mb[m.name].MB
+        if mb then parts[#parts + 1] = string.format('MB %.1fk x%d', mb.a, mb.n) end
+        table.sort(parts)
+        lines[#lines + 1] = m.name .. ': ' .. ((#parts > 0) and table.concat(parts, '; ') or 'nothing learned yet')
+    end
+    return lines
 end
 
 
@@ -10283,6 +10882,30 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.90 - Dynamic group skillchain (Mark, 2026-11-20: "any of our 4 friends may
+        have different jobs and weapons ... scan the players in the party for
+        jobs, weapons, weaponskills, and then determine a plan for most damage").
+        * Skillchain properties now come from Windower's res.weapon_skills, so
+          every weapon works (Shadow on THF with daggers, etc.); GSC_WS only
+          overrides.
+        * Profiles: each AA sends its job, level, weapon and WS in a hidden
+          party line (aa~g p) on aa fight, a join, after zoning, on aa gsc ?,
+          and on a job / main-hand change while idle (mid-fight swaps and
+          Dread Spikes ignored). Lines are 1.5s apart by party slot. A
+          teammate's profile beats the job_weapons / pools guesses; without
+          one, the WS we see them use are added to their list.
+        * Learning: every AA learns each player's WS damage, the skillchain
+          damage of each closing WS (Light-equivalent) and magic bursts, into
+          data/aa_learned_<Character>.lua (never shipped). aa_knowledge.lua
+          is the master (shipped, read only). Per entry more samples wins.
+          The plan uses learned damage before the built-in tables, and each
+          skillchain step adds the fillers' MB damage x mb_weight.
+        * Sync: on aa fight / a join every AA posts a digest (aa~g d); whoever
+          knows most about a player sends those entries (aa~g k).
+        * make_release.py merges every data/aa_learned_*.lua on MarksPC into
+          aa_knowledge.lua and ships it; aa update downloads it ("extra=" in
+          manifest.txt, so v4.89 still updates to v4.90).
+        * //aa gsc k (learned), sync, save; //aa gsc ? re-sends profiles.
 v4.89 - v4.88's EP chain logic taken out again (Mark, 2026-11-20: "I don't
         want that logic in the job_config abilities ... unless it really
         helped"). It didn't: 15h on v4.88, the burst fired on chain kill #20
@@ -10991,7 +11614,7 @@ function aa_addon_command(command, ...)
         if command ~= 'help' then
             windower.add_to_chat(8, '[AutoAttack] Unknown command: ' .. tostring(command))
         end
-        windower.add_to_chat(8, '[AutoAttack] v' .. _addon.version .. ' -- //aa assist | pull [n|s|e|w|...] | stop | move [off|pull|provoke|melee|target|n] | debug [0|1|2] | target [packet|native] | rings [reset] | ds [clear] | ws [off|on] | gsc [on|off|auto] | fullparty [on|off|fix] | dumpinv | id | pet')
+        windower.add_to_chat(8, '[AutoAttack] v' .. _addon.version .. ' -- //aa assist | pull [n|s|e|w|...] | stop | move [off|pull|provoke|melee|target|n] | debug [0|1|2] | target [packet|native] | rings [reset] | ds [clear] | ws [off|on] | gsc [on|off|auto|?|k|sync] | fullparty [on|off|fix] | dumpinv | id | pet')
         windower.add_to_chat(8, '[AutoAttack] party: //aa invite me|<name> [sync <n>] [leader <n>] [fight] | fight | stop | stack | follow [n] | unfollow | cancel | disband | leave | leader <n> | sync <n> | unsync | trusts [grp] | retr | retrust | rest | mount [n] | dismount | pass | lot | sneak | invis | warp | status | ping | party')
     end
 end
@@ -11039,12 +11662,14 @@ windower.register_event('login', function()
 end)
 windower.register_event('logout', function()
     auto_attack = false
+    pcall(gsc_k_save)   -- v4.90
     aa_log_char = nil; aa_log_close(); aa_dbg_file_key = nil   -- v4.59: next lines go to the next character's file
     dead_cursor_pending_id = nil; native_target_busy = false  -- v4.18
 end)
 -- v4.18: job change -> reload this job's config (was only done on //aa pull|assist)
 windower.register_event('job change', function()
     update_job_configs()
+    GSC.learned = nil   -- v4.90: the new job's WS list for the next profile
 end)
 
 -- v3.98: Main-loop watchdog. Checked every 5s. If auto_attack is on but the

@@ -240,6 +240,16 @@ local dread_spikes = {enabled = true,
 --                  Light skillchain damage when it closes (v4.72, built in from
 --                  logs). The plan adds both. Light made from two Light WS
 --                  ends the chain (it can't be continued).
+--   v4.90 profiles and learning:
+--   announce       true: send your job / weapon / WS to the party (hidden line)
+--   learn          true: learn WS, skillchain and magic burst damage into
+--                  data/aa_learned_<Character>.lua (aa_knowledge.lua = master)
+--   sync           true: share learned damage with the party on aa fight / join
+--   learn_min      samples before a learned figure replaces the built-in one
+--   learn_cap      plain average up to this many samples, then a rolling one
+--   pool_max       most WS planned per player when the pool is "all you know"
+--   weapon_hold    s a new job / weapon must stay (while idle) before it is sent
+--   mb_weight      share of the fillers' learned magic burst added per skillchain
 -- ---------------------------------------------------------------------------
 local group_skillchain = {enabled = true,
 	min_players    = 2,
@@ -257,6 +267,17 @@ local group_skillchain = {enabled = true,
 	bank_hpp       = 10,     -- v4.71: no new chain at or under this mob HP% (unless 2000+ TP)
 	noshow_max     = 3,      -- v4.71: drop a teammate's WS after they pass on it this many times
 	block_tp       = 500,    -- v4.73: a better-placed teammate keeps their turn from this TP (seen late)
+	-- v4.90: profiles, learning, knowledge sync (see above)
+	announce       = true,
+	learn          = true,
+	sync           = true,
+	learn_min      = 3,
+	learn_cap      = 200,
+	learn_save_secs = 120,
+	sync_min       = 5,
+	pool_max       = 6,
+	weapon_hold    = 3,
+	mb_weight      = 0.5,
 	pre_wait       = 6.0,    -- v4.87: s others hold their opener for a teammate's once-per-mob WS (Full Break)
 	once_per_mob   = {['Great Axe'] = 'Full Break'},
 	filler_jobs    = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},

@@ -15,6 +15,7 @@
     own line was dropped by the game,
     v4.69: pull / assist / ws / move / ds answer the sender,
     v4.70: aa gsc [on|off|auto] -- group skillchain switch, answers the sender,
+    v4.90: aa gsc ? -- every AA re-sends its profile; aa~g lines are hidden,
     v4.75: stacking watch -- aa fight members re-stack on the leader mid-fight
     (within restack_max), the leader keeps its aa fight spot)
 
@@ -243,6 +244,7 @@ local function party_say(line)
         send('input /p ' .. line)
     end
 end
+function aa_party_say(line) party_say(line) end   -- v4.90: autoattack.lua's GSC lines
 local function party_sent_now()   -- a party line of ours just went out (typed or macro)
     P.party_last = math.max(P.party_last, os.clock())
 end
@@ -593,6 +595,7 @@ end
 
 local function do_fight(ctx)
     P.fight_at = os.clock()   -- v4.75: the ASSIST / PULL this starts keeps fight mode
+    if gsc_on_fight then pcall(gsc_on_fight) end   -- v4.90: profiles + learned damage
     if i_lead() then
         P.follow, P.follow_fight = nil, false
         -- wait (stack_wait at most) for party members in this zone to stack on us
@@ -1663,7 +1666,8 @@ end
 -- ---------------------------------------------------------------------------
 local UPDATE_URL   = 'https://raw.githubusercontent.com/thrydwolfvalefor/autoattack/main/'
 local UPDATE_FILES = {['autoattack.lua'] = true, ['aa_party.lua'] = true,
-                      ['aa_config_defaults.lua'] = true, ['README.md'] = true}
+                      ['aa_config_defaults.lua'] = true, ['README.md'] = true,
+                      ['aa_knowledge.lua'] = true}   -- v4.90
 local function ver_cmp(a, b)
     local pa, pb = {}, {}
     for n in tostring(a):gmatch('%d+') do pa[#pa + 1] = tonumber(n) end
@@ -1717,6 +1721,11 @@ local function do_update(ctx, force)
     local ver = man:match('version%s*=%s*([%d%.]+)')
     local files = {}
     for name, size in man:gmatch('file%s*=%s*([%w_%.%-]+)%s+(%d+)') do
+        if not UPDATE_FILES[name] then return bad('manifest lists "' .. name .. '" -- refused.') end
+        files[#files + 1] = {name = name, size = tonumber(size)}
+    end
+    -- v4.90: "extra=" files (aa_knowledge.lua) -- v4.89 and older skip these lines
+    for name, size in man:gmatch('extra%s*=%s*([%w_%.%-]+)%s+(%d+)') do
         if not UPDATE_FILES[name] then return bad('manifest lists "' .. name .. '" -- refused.') end
         files[#files + 1] = {name = name, size = tonumber(size)}
     end
@@ -1991,6 +2000,14 @@ windower.register_event('chat message', function(message, sender, mode, gm)
         return
     end
     if low:find('^aa~') then
+        -- v4.90: group skillchain profiles / learned damage from a party member
+        if mode == 4 and low:find('^aa~g%s') then
+            if member(sender) and gsc_proto then
+                local ok, err = pcall(gsc_proto, sender, text)
+                if not ok then dbg('aa~g from ' .. sender .. ' failed: ' .. tostring(err)) end
+            end
+            return
+        end
         if mode == 3 then handle_proto(sender, text) end
         return
     end
@@ -2063,6 +2080,7 @@ windower.register_event('zone change', function()
     aa_warp_restore(true)   -- v4.53: old right ring back on after loading
     run_stop()
     P.zone_quiet = os.clock() + 15   -- v4.80: the party list reloads after a zone
+    if gsc_on_zone then pcall(gsc_on_zone) end   -- v4.90
 end)
 
 -- v4.46: a player joining the party (any invite, typed or AA's) starts the
@@ -2090,6 +2108,7 @@ local function watch_party()
     if joined then
         P.last_join = now
         dbg(joined .. ' joined the party -- no Trusts for ' .. opt('trust_wait') .. 's.')
+        if gsc_on_join then pcall(gsc_on_join, joined) end   -- v4.90
     end
     if P.watch_lead == false and lead and has_players() then
         P.last_join = nil
@@ -2178,6 +2197,7 @@ windower.register_event('prerender', function()
     watch_party()
     stack_watch()   -- v4.75
     if P.stack or P.follow or P.running then move_tick() end
+    if gsc_watch then pcall(gsc_watch) end   -- v4.90: job / weapon change -> profile
 end)
 
 windower.register_event('unload', function() run_stop() end)
@@ -2212,5 +2232,13 @@ do
         end
     end
 end
+
+-- v4.90: keep the group skillchain's party lines ("aa~g ...") out of the chat
+-- window -- 13 = a party member's line, 5 = your own (res/chat.lua)
+windower.register_event('incoming text', function(original, modified, mode)
+    if mode ~= 13 and mode ~= 5 then return end
+    local s = clean(original)
+    if s:find('^%([%a]+%)%s*[Aa][Aa]~[Gg]%s') then return true end
+end)
 
 return P
