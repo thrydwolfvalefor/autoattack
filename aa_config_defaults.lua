@@ -1912,6 +1912,10 @@ local party = {enabled = true,
 	restack_max    = 10,     -- v4.75: farthest a member re-stacks while fighting (farther: between fights)
 	restack_delay  = 2,      -- v4.75: s off the stack before re-stacking
 	restack_far_secs = 20,   -- v4.78: farther than restack_max this long while fighting: re-stack anyway (0 = never)
+	stack_after_kill = true, -- v5.02: aa fight members stack on the leader after every kill
+	stack_kill_min = 0.5,    -- v5.02: yalms off the leader before the after-kill stack runs
+	stack_kill_max = 30,     -- v5.02: farthest a member runs for the after-kill stack
+	stack_on_oor   = true,   -- v5.02: melee out of range while engaged -> stack on the leader
 	stack_timeout  = 30,     -- s a member runs toward the leader before giving up
 	stack_wait     = 5,      -- s the leader waits for members to stack before the first pull
 	trust_wait     = 120,    -- s after dropping Trusts before the inviting leader calls them again

@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.01'
+_addon.version  = '5.02'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -11871,6 +11871,26 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.02 - Stack after every kill; members follow the leader's target; Level
+        Sync notice (Mark, 2026-11-21: "when in 'aa fight', do a stack after
+        every kill, because players are sometimes getting separated").
+        * aa fight members run onto the leader's exact spot after every kill
+          of the mob they were fighting when they are more than
+          stack_kill_min (0.5y) away and within stack_kill_max (30y). From
+          the v5.01 log: Myth stood 1-2y off the stack 71% of the time (the
+          re-stack only fired past 2y), his melee was "out of range" at a
+          median 4.2y, and he landed 0 melee rounds on 29 of 155 bats.
+        * Melee "out of range" while engaged and more than 0.5y from the
+          leader -> stack now (stack_on_oor, at most every 5s).
+        * Members follow the leader's target as soon as it changes (the
+          leader's own target, read every 0.25s), not only when the leader
+          acts on it -- the v5.01 log had members idle 3s in, 0-4y from the
+          bat, on 108 bats (4-18s to engage).
+        * Fast assist on the leader's mob ignores the post-kill quiet window
+          (the mob is alive), retries after 1.5s instead of 3s, and can't get
+          stuck "busy".
+        * Level Sync wearing off is announced (L1): on 11-21 Vayne leaving
+          ended the sync and EP per kill fell ~27% (about 470 -> 340).
 v5.01 - More detail in the debug log (level 2 only) (Mark, 2026-11-21:
         "More detail in the logs is fine, for debug level 2 only"; no
         movement changes; hot-switch hold unchanged).
@@ -12454,6 +12474,7 @@ windower.register_event('incoming chunk', function(id, data)
             cant_see_strikes[_dt] = nil; cant_see_strike_time[_dt] = nil
             aa_kill_seen(_dt)  -- v4.19
             if pstat_kill then pcall(pstat_kill, _dt) end   -- v4.99: party report
+            if aa_party_on_kill then pcall(aa_party_on_kill, _dt) end   -- v5.02: aa fight members re-stack
             if mob_hits then mob_hits[_dt] = nil end
             if ds_mobs then ds_mobs[_dt] = nil end  -- v4.32
             -- v4.34: was it us? (msg 97 = "<you> were defeated by <mob>")
@@ -12476,6 +12497,7 @@ windower.register_event('incoming chunk', function(id, data)
                 oor_msg.id = _t4
                 oor_msg.time = os.clock()
                 if PSTAT then PSTAT.oor = PSTAT.oor + 1 end   -- v4.99
+                if aa_party_on_oor and os.clock() - (last_ws_time or 0) >= 2 then pcall(aa_party_on_oor, _t4) end   -- v5.02: melee out of range -> re-stack
                 -- v5.01: melee (auto-attack) or a WS / ability we just sent, and how far the mob was
                 if PSTAT and PSTAT.oorm then
                     if os.clock() - (last_ws_time or 0) < 2 then PSTAT.oorw = PSTAT.oorw + 1 else PSTAT.oorm = PSTAT.oorm + 1 end

@@ -67,6 +67,10 @@ local D = {
     restack_max    = 10,     -- v4.75: farthest a member re-stacks while fighting (farther: between fights)
     restack_delay  = 2,      -- v4.75: s off the stack before re-stacking
     restack_far_secs = 20,   -- v4.78: farther than restack_max this long while fighting: re-stack anyway (0 = never)
+    stack_after_kill = true, -- v5.02: aa fight members stack on the leader after every kill
+    stack_kill_min = 0.5,    -- v5.02: yalms off the leader before the after-kill stack runs
+    stack_kill_max = 30,     -- v5.02: farthest a member runs for the after-kill stack
+    stack_on_oor   = true,   -- v5.02: melee out of range while engaged -> stack on the leader
     stack_timeout  = 30,     -- s a member runs toward the leader before giving up
     stack_wait     = 5,      -- s the leader waits for members to stack before the first pull
     trust_wait     = 120,    -- s after dropping trusts before the inviting leader calls them again
@@ -2203,18 +2207,21 @@ end
 -- /ra, melee, WS, spell) or a mob acts on anyone in the party, the member
 -- targets that mob and attacks.
 -- ---------------------------------------------------------------------------
-local function fast_engage(mob_id, why)
+local function fast_engage(mob_id, why, live)   -- v5.02: live = the leader's live mob
+    -- v5.02: a fast engage that never finished doesn't block the next one
+    if P.engaging and os.clock() - (P.engaging_at or 0) > 3 then P.engaging = false end
     if P.engaging or engaged() then return end
     local last = P.fast_last[mob_id]
-    if last and os.clock() - last < 3 then return end
+    if last and os.clock() - last < (live and 1.5 or 3) then return end
     P.fast_last[mob_id] = os.clock()
-    P.engaging = true
+    P.engaging, P.engaging_at = true, os.clock()
     coroutine.schedule(function()
         local m = windower.ffxi.get_mob_by_id(mob_id)
         if m and m.spawn_type == 16 and m.hpp and m.hpp > 0 and m.valid_target and not engaged() then
             local t = windower.ffxi.get_mob_by_target('t')
             if not t or t.id ~= mob_id then
-                if set_target then set_target(mob_id) end
+                -- v5.02: the leader's live mob skips the post-kill quiet window
+                if set_target then set_target(mob_id, live and true or nil) end
                 for _ = 1, 8 do
                     coroutine.sleep(0.1)
                     t = windower.ffxi.get_mob_by_target('t')
@@ -2269,13 +2276,24 @@ local function lead_mob_watch()
     local now = os.clock()
     if now < (P.lead_watch_at or 0) then return end
     P.lead_watch_at = now + 0.25
-    if not P.follow_fight or not P.lead_mob or now - (P.lead_mob_at or 0) > LEAD_MOB_KEEP then return end
-    if not aa_running() or aa_get_mode() ~= 'assist' then return end
+    if not P.follow_fight or not aa_running() or aa_get_mode() ~= 'assist' then return end
+    -- v5.02: the leader's own target (engaged), the moment it changes
+    local lmem = P.follow and member(P.follow)
+    local lmob = lmem and lmem.mob
+    if lmob and lmob.status == 1 and (lmob.target_index or 0) > 0 then
+        local tm = windower.ffxi.get_mob_by_index(lmob.target_index)
+        if tm and tm.id and tm.id ~= P.lead_mob and lead_mob_ok(tm) then
+            P.lead_mob, P.lead_mob_at = tm.id, now
+        elseif tm and tm.id == P.lead_mob then
+            P.lead_mob_at = now
+        end
+    end
+    if not P.lead_mob or now - (P.lead_mob_at or 0) > LEAD_MOB_KEEP then return end
     local p = me()
     if not p then return end
     local m = windower.ffxi.get_mob_by_id(P.lead_mob)
     if not lead_mob_ok(m) then P.lead_mob = nil; return end
-    if p.status == 0 then fast_engage(P.lead_mob, "leader's mob")
+    if p.status == 0 then fast_engage(P.lead_mob, "leader's mob", true)
     elseif p.status == 1 then corpse_switch(P.lead_mob, "leader's mob") end
 end
 
@@ -2320,6 +2338,45 @@ windower.register_event('prerender', function()
     lead_mob_watch()   -- v5.00
     if P.stack or P.follow or P.running then move_tick() end
     if gsc_watch then pcall(gsc_watch) end   -- v4.90: job / weapon change -> profile
+end)
+
+-- v5.02: STACK AFTER EVERY KILL (Mark, 2026-11-21: "when in 'aa fight', do a
+-- stack after every kill, because players are sometimes getting seperated").
+-- aa fight members only; the leader keeps its fight spot (anchor).
+local function fight_stack(why, maxd)
+    if not P.follow_fight or not P.follow or P.stack or not aa_running() then return false end
+    if mv and mv.active then return false end
+    if i_lead() then return false end
+    local p = me()
+    if not p or p.status == 2 or p.status == 3 or p.status == 33 then return false end
+    local d = dist_to_name(P.follow)
+    if not d or d <= opt('stack_kill_min') or d > (maxd or opt('stack_kill_max')) then return false end
+    P.restacks = (P.restacks or 0) + 1
+    say(string.format('STACK: %s -- %.1fy from %s, stacking (%d this session).', why, d, P.follow, P.restacks))
+    P.stack = {name = P.follow, deadline = os.clock() + opt('stack_timeout'), engaged_ok = true}
+    return true
+end
+function aa_party_on_kill(dead_id)
+    if opt('stack_after_kill') == false or not P.follow_fight then return end
+    local t = windower.ffxi.get_mob_by_target('t')
+    if not ((t and t.id == dead_id) or P.lead_mob == dead_id) then return end   -- not our fight
+    local g = P.gen
+    coroutine.schedule(function()   -- after the fast switch / hot switch has gone out
+        if P.gen == g then fight_stack('after the kill') end
+    end, 0.6)
+end
+function aa_party_on_oor(mob_id)
+    if opt('stack_on_oor') == false or not P.follow_fight or not engaged() then return end
+    local now = os.clock()
+    if now - (P.oor_stack_at or -100) < 5 then return end
+    if fight_stack('melee out of range', opt('restack_max')) then P.oor_stack_at = now end
+end
+-- v5.02: Level Sync wore off (11-21: EP per kill fell ~27% when the designee left)
+windower.register_event('incoming text', function(original)
+    if not original or not original:find('Level Sync effect wears off', 1, true) then return end
+    if not has_players() then return end
+    info_msg('LEVEL SYNC is off -- EP per kill is lower without it (11-21: about 470 -> 340). ' ..
+             'Party leader: "aa sync <name>" syncs to that member (pick the lowest master level).')
 end)
 
 windower.register_event('unload', function() run_stop() end)
