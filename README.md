@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **4.97** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **4.98** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -552,12 +552,16 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
   * Lines go out 1.5 seconds apart by party slot, so four players never post at once.
   * A teammate's profile comes before the `job_weapons` / `pools` guesses. Without one, the weapon skills you see them use are added to their list.
 * **Learning.** Every AutoAttack learns, for every player in the party (Vayne included): each WS's damage, the skillchain damage each closing WS makes (as Light-equivalent) and magic burst damage. It's saved to `data/aa_learned_<Character>.lua` every 2 minutes, on zoning, logout and unload.
-  * `aa_knowledge.lua` is the master. At load both files are read; for each entry the one with more samples wins.
+  * `aa_knowledge.lua` is the master. At load both are read. Since v4.98 the learning file keeps what was learned on this PC since the master, and the master lists what it already holds, so nothing is counted twice and nothing is lost. Older files convert themselves.
+  * The newest `learn_window` (60) samples make each figure, so gear changes show quickly.
+  * Per mob type: the player's figure for that mob is blended with their all-mob figure x how hard the party hits that mob type (`mob_k` 5). A new mob type is right after a kill or two.
+  * A sample under 25% of a settled average (20+ samples) is skipped unless 3 come in a row (`odd_ratio`, `odd_min`, `odd_repeat`).
+  * Only real weapon skills count: DRK Weapon Bash (which arrives with Ruinator's ID) is ignored since v4.98.
   * The plan uses learned damage first (that player's, then the party's, after `learn_min` samples), then the built-in figures. Each skillchain also counts the fillers' learned magic burst x `mb_weight`.
 * **Sharing.** On `aa fight` and when a player joins, every AutoAttack posts a short digest (`aa~g d`). Whoever knows the most about a player sends those entries (`aa~g k`), and the others take any entry with more samples than theirs.
-* **Master file.** When a release is built on MarksPC, `make_release.py` merges `aa_knowledge.lua` and every `data/aa_learned_*.lua` into a new `aa_knowledge.lua` and ships it; `aa update` downloads it (`extra=` in `manifest.txt`).
+* **Master file.** When a release is built on MarksPC, `make_release.py` adds the new samples of every `data/aa_learned_*.lua` (and the entries teammates sent) to `aa_knowledge.lua`, records what it took, and ships it; `aa update` downloads it (`extra=` in `manifest.txt`).
 * `//aa gsc` marks players whose profile it has with `(profile)`. `//aa gsc k` lists what is learned for the party, `//aa gsc sync` compares now, `//aa gsc save` writes the learning file, `//aa gsc ?` (or `/p aa gsc ?`) re-sends profiles.
-* Settings in `group_skillchain`: `announce`, `learn`, `sync` (all true), `learn_min` 3, `learn_cap` 200 (plain average, then rolling), `pool_max` 6, `weapon_hold` 3, `mb_weight` 0.5, `sync_min` 5.
+* Settings in `group_skillchain`: `announce`, `learn`, `sync` (all true), `learn_min` 3, `learn_window` 60, `mob_k` 5, `odd_min` 20, `odd_ratio` 0.25, `odd_repeat` 3, `pool_max` 6, `weapon_hold` 3, `mb_weight` 0.5, `sync_min` 5.
 
 ### `ring_config`
 

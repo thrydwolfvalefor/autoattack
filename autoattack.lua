@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.97'
+_addon.version  = '4.98'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -5149,6 +5149,9 @@ GSC_DEF = {
     power = {}, sc_power = {}, players = {},
     -- v4.90: profiles, learning, knowledge sync
     announce = true, learn = true, sync = true, learn_min = 3, learn_cap = 200, learn_save_secs = 120,
+    -- v4.98: learn_window replaces learn_cap; mob_k blends a mob type's own figure with the
+    -- party-wide toughness of that mob; odd_* skip a sample far under a settled average
+    learn_window = 60, mob_k = 5, odd_min = 20, odd_ratio = 0.25, odd_repeat = 3,
     sync_min = 5, pool_max = 6, weapon_hold = 3, mb_weight = 0.5,
 }
 GSC = {on = nil, chain = nil, jobs = {}, began = {}, pre_done = {}, pre_n = 0, mob = 0, mob_since = 0,
@@ -5171,13 +5174,13 @@ end
 function gsc_power(ws, who)
     local p = gsc_cfg('power')
     local v = type(p) == 'table' and tonumber(p[ws]) or nil
-    return v or gsc_k_mob('wsm', who, ws) or gsc_k_value('ws', who, ws) or GSC_POWER[ws] or 6   -- v4.90: learned damage (v4.92: this mob type first)
+    return v or gsc_k_est('ws', who, ws) or GSC_POWER[ws] or 6   -- v4.90: learned damage (v4.98: blended for this mob type)
 end
 -- v4.72: Light skillchain damage when this WS closes it
 function gsc_scpower(ws, who)
     local p = gsc_cfg('sc_power')
     local v = type(p) == 'table' and tonumber(p[ws]) or nil
-    return v or gsc_k_mob('scm', who, ws) or gsc_k_value('sc', who, ws) or GSC_SCPOWER[ws] or 18   -- v4.90: learned (v4.92: this mob type first)
+    return v or gsc_k_est('sc', who, ws) or GSC_SCPOWER[ws] or 18   -- v4.90: learned (v4.98: blended for this mob type)
 end
 -- v4.72: damage of a WS that makes skillchain r (level l, term = chain ends)
 function gsc_value(ws, l, term, who)
@@ -5639,6 +5642,15 @@ function gsc_on_action(act)
     local t1 = act.targets[1]
     local a1 = t1 and type(t1.actions) == 'table' and t1.actions[1]
     if not t1 or not t1.id or not a1 or t1.id == act.actor_id then return end
+    -- v4.98: a job ability sent as category 3 (DRK Weapon Bash: its ID is Ruinator's)
+    -- isn't a WS -- only WS messages count (185 damage, 188 miss, ...)
+    if cat == 3 and not GSC_WS_MSG[a1.message] then
+        local _wn = res.weapon_skills[act.param]
+        gsc_dbg('notws' .. tostring(act.param) .. '|' .. tostring(a1.message),
+                'GSC: action ' .. tostring(act.param) .. ' (' .. tostring(_wn and _wn.en) .. ') message ' ..
+                tostring(a1.message) .. ' -- not a weapon skill (job ability), ignored.')
+        return
+    end
     local r = (cat == 3) and res.weapon_skills[act.param] or res.monster_abilities[act.param]
     local name = r and r.en
     local props = name and gsc_props(name)
@@ -5749,7 +5761,9 @@ end
 --   each closing WS makes (as Light-equivalent) and magic burst damage.
 --     aa_knowledge.lua                 master: shipped, read only, aa update replaces it
 --     data/aa_learned_<Character>.lua  this character's learning, never shipped
---   Both are read at load; per entry the one with more samples wins.
+--   Both are read at load. v4.98: the learning file keeps counts since the
+--   master (the master lists what it already holds), so nothing is counted
+--   twice or lost; the newest learn_window samples count.
 --   On aa fight / a join every AA sends a digest ("aa~g d"); whoever knows the
 --   most about a player sends those entries ("aa~g k"), merged the same way.
 --   The release merges Shadow's (and every other) learning file on MarksPC
@@ -5769,7 +5783,19 @@ GSC_KINDS_SYNC = {'ws', 'sc', 'mb'}
 GSC_MOB = nil   -- name of the mob the plan is for (set by gsc_tick)
 GSC_RESPROPS, GSC_WSID = nil, nil
 GSC_MBV = 0
-GSC_K  = {ws = {}, sc = {}, mb = {}, wsm = {}, scm = {}}
+GSC_K  = {ws = {}, sc = {}, mb = {}, wsm = {}, scm = {}}   -- what the plan reads (v4.98: built from the three below)
+-- v4.98: GSC_KB = master + teammates' entries (more samples wins); GSC_KO = what this PC
+-- learned for this character, {c = samples ever, s = their sum, a = recent average, t};
+-- GSC_KP = entries taken from teammates (aa~g k), saved for the release; GSC_KU = own
+-- counts the master already holds (master.used). Own samples not yet in the master =
+-- c - used.c, so a file is never counted twice and a smaller file never loses its news.
+GSC_KB, GSC_KO, GSC_KP, GSC_KU = nil, nil, nil, {}
+GSC_KODD = {}   -- v4.98: run of low samples per entry (outlier guard)
+GSC_RMOB = {}   -- v4.98: toughness of a mob type, cached
+GSC_KPRE = {ws = 'pws', sc = 'psc', mb = 'pmb', wsm = 'pwsm', scm = 'pscm'}
+-- v4.98: messages a real WS lands with (damage, drain, miss, no effect, resisted, MP / HP)
+GSC_WS_MSG = {[185] = true, [187] = true, [188] = true, [189] = true, [197] = true,
+              [224] = true, [225] = true, [226] = true, [238] = true}
 GSC_KS = {char = nil, dirty = false, saved = 0, base_ver = nil}
 GSC_P  = {prof = {}, seen = {}, sent = -100, pend = nil, sig = nil, sig_at = 0, sig_sent = nil,
           dig = {}, dig_mine_at = -100, dig_eval = nil, watch_at = 0}
@@ -5888,49 +5914,167 @@ function gsc_k_merge(dst, src)
     end
     return changed
 end
+-- v4.98: knowledge parts
+function gsc_k_empty() return {ws = {}, sc = {}, mb = {}, wsm = {}, scm = {}} end
+function gsc_k_win() return math.max(gsc_num('learn_window'), 1) end
+-- own samples of this entry the master doesn't hold yet: count, recent average
+function gsc_k_delta(kind, who, key)
+    local o = GSC_KO and GSC_KO[kind] and GSC_KO[kind][who] and GSC_KO[kind][who][key]
+    if not o then return 0, nil end
+    local u = GSC_KU[kind] and GSC_KU[kind][who] and GSC_KU[kind][who][key]
+    local d = (o.c or 0) - (u or 0)
+    if d <= 0 then return 0, nil end
+    return d, o.a
+end
+-- master (nb, ab) + own news (nd, ad): the newest learn_window samples count
+function gsc_k_combine(nb, ab, nd, ad)
+    nb, nd = nb or 0, nd or 0
+    local W = gsc_k_win()
+    local wo = math.min(nd, W)
+    local wm = math.min(nb, math.max(W - wo, 0))
+    if wo + wm <= 0 then return 0, nil end
+    return nb + nd, ((wo > 0) and wo * ad or 0) / (wo + wm) + ((wm > 0) and wm * ab or 0) / (wo + wm)
+end
+function gsc_k_view(kind, who, key)
+    local b = GSC_KB[kind][who] and GSC_KB[kind][who][key]
+    local nd, ad = gsc_k_delta(kind, who, key)
+    local n, a = gsc_k_combine(b and b.n or 0, b and b.a, nd, ad)
+    local tw = GSC_K[kind][who]
+    if n <= 0 or not a then
+        if tw then tw[key] = nil end
+        return
+    end
+    if not tw then tw = {}; GSC_K[kind][who] = tw end
+    local o = GSC_KO[kind][who] and GSC_KO[kind][who][key]
+    tw[key] = {n = n, a = a, t = math.max(b and b.t or 0, o and o.t or 0)}
+end
+function gsc_k_rebuild()
+    GSC_K, GSC_RMOB = gsc_k_empty(), {}
+    for _, kind in ipairs(GSC_KINDS) do
+        local seen = {}
+        for _, src in ipairs({GSC_KB, GSC_KO}) do
+            for who, tw in pairs(src[kind] or {}) do
+                for key in pairs(tw) do
+                    local id = who .. '\0' .. key
+                    if not seen[id] then seen[id] = true; gsc_k_view(kind, who, key) end
+                end
+            end
+        end
+    end
+end
+-- master.used = {{character, kind, player, key, count}, ...}: this character's part
+function gsc_k_used(base, name)
+    local U = gsc_k_empty()
+    for _, u in ipairs(type(base) == 'table' and type(base.used) == 'table' and base.used or {}) do
+        if type(u) == 'table' and u[1] == name and U[u[2]] and type(u[3]) == 'string' and type(u[4]) == 'string' then
+            U[u[2]][u[3]] = U[u[2]][u[3]] or {}
+            U[u[2]][u[3]][u[4]] = tonumber(u[5]) or 0
+        end
+    end
+    return U
+end
+-- v4.98 learning file (format 2)
+function gsc_k_own_load(own)
+    for _, kind in ipairs(GSC_KINDS) do
+        for who, tw in pairs(type(own[kind]) == 'table' and own[kind] or {}) do
+            for key, e in pairs(type(tw) == 'table' and tw or {}) do
+                local c = type(e) == 'table' and tonumber(e.c)
+                if type(who) == 'string' and type(key) == 'string' and c and c > 0 then
+                    GSC_KO[kind][who] = GSC_KO[kind][who] or {}
+                    GSC_KO[kind][who][key] = {c = c, s = tonumber(e.s) or 0, a = tonumber(e.a) or 0, t = tonumber(e.t) or 0}
+                end
+            end
+        end
+    end
+    local p = {}
+    for kind, pk in pairs(GSC_KPRE) do p[kind] = own[pk] end
+    gsc_k_merge(GSC_KP, p)
+end
+-- a pre-v4.98 learning file (totals): what it has beyond the master is this PC's news.
+-- Ruinator under 1k is DRK Weapon Bash read as a WS before v4.98: dropped.
+function gsc_k_legacy(own)
+    local n = 0
+    for _, kind in ipairs(GSC_KINDS) do
+        for who, tw in pairs(type(own[kind]) == 'table' and own[kind] or {}) do
+            for key, e in pairs(type(tw) == 'table' and tw or {}) do
+                local en, ea = type(e) == 'table' and tonumber(e.n), type(e) == 'table' and tonumber(e.a)
+                local junk = type(key) == 'string' and key:find('^Ruinator') and ea and ea < 1
+                if type(who) == 'string' and type(key) == 'string' and en and ea and not junk then
+                    local b = GSC_KB[kind][who] and GSC_KB[kind][who][key]
+                    local d = en - (b and b.n or 0)
+                    if d > 0 then
+                        local u = GSC_KU[kind] and GSC_KU[kind][who] and GSC_KU[kind][who][key] or 0
+                        GSC_KO[kind][who] = GSC_KO[kind][who] or {}
+                        GSC_KO[kind][who][key] = {c = d + u, s = d * ea, a = ea, t = tonumber(e.t) or 0}
+                        n = n + 1
+                    end
+                end
+            end
+        end
+    end
+    return n
+end
 -- load the master + this character's learning (again when the character changes)
 function gsc_k_ensure()
     local pl = windower.ffxi.get_player()
     local name = pl and pl.name
     if not name or name == GSC_KS.char then return end
     if GSC_KS.char and GSC_KS.dirty then gsc_k_save() end
-    GSC_K = {ws = {}, sc = {}, mb = {}, wsm = {}, scm = {}}
+    GSC_KB, GSC_KO, GSC_KP, GSC_KODD = gsc_k_empty(), gsc_k_empty(), gsc_k_empty(), {}
     local base = gsc_k_read(gsc_k_path(nil))
-    if base then gsc_k_merge(GSC_K, base) end
+    if base then gsc_k_merge(GSC_KB, base) end
+    GSC_KU = gsc_k_used(base, name)
     local own = gsc_k_read(gsc_k_path(name))
-    if own then gsc_k_merge(GSC_K, own) end
-    GSC_KS.char, GSC_KS.dirty, GSC_KS.saved = name, false, os.clock()
+    local legacy = 0
+    if own and tonumber(own.format) == 2 then gsc_k_own_load(own)
+    elseif own then legacy = gsc_k_legacy(own) end
+    gsc_k_merge(GSC_KB, GSC_KP)
+    gsc_k_rebuild()
+    GSC_KS.char, GSC_KS.dirty, GSC_KS.saved = name, legacy > 0, os.clock()
     gsc_ns_load(name)   -- v4.92
     GSC_KS.base_ver = base and base.version or nil
-    local n = 0
+    local n, news = 0, 0
     for _, v in pairs(gsc_k_totals()) do n = n + v end
+    for _, kind in ipairs(GSC_KINDS_SYNC) do
+        for who, tw in pairs(GSC_KO[kind]) do
+            for key in pairs(tw) do news = news + (gsc_k_delta(kind, who, key)) end
+        end
+    end
     debug_msg('GSC: knowledge loaded for ' .. name .. ' -- master ' .. (base and ('v' .. tostring(base.version)) or 'missing') ..
-              ', own file ' .. (own and 'found' or 'new') .. ', ' .. n .. ' samples.')
+              ', own file ' .. (own and ((legacy > 0) and ('converted from the old format, ' .. legacy .. ' entries') or 'found') or 'new') ..
+              ', ' .. n .. ' samples (' .. news .. ' learned here, not in the master yet).')
 end
-function gsc_k_write(path, K, what)
+function gsc_k_write(path, what)
     local ver = tostring(_addon and _addon.version or '?')
     local out = {'-- AutoAttack ' .. what .. ' -- written by AutoAttack v' .. ver .. ' on ' .. os.date('%Y-%m-%d %H:%M'),
-                 '-- [kind][player][weapon skill] = {n = samples, a = average (thousands), t = last update}',
-                 '-- ws = WS damage; sc = skillchain damage when this WS closes it, as Light-equivalent',
-                 '-- (Light 1.0, level 2 0.55, level 1 0.25, Light on Light 1.4); mb = magic bursts',
-                 'return {', string.format('version = %q,', ver)}
-    for _, kind in ipairs(GSC_KINDS) do
-        out[#out + 1] = kind .. ' = {'
+                 '-- v4.98 format 2. [kind][player][weapon skill] = {c = samples learned here (ever),',
+                 '-- s = their sum, a = recent average (thousands), t = last update}; the master holds',
+                 '-- "used" counts, so only c - used counts as new. pws / psc / pmb / pwsm / pscm =',
+                 '-- entries teammates sent ({n, a, t}). ws = WS damage; sc = skillchain damage when',
+                 '-- this WS closes it, as Light-equivalent (Light 1.0, level 2 0.55, level 1 0.25,',
+                 '-- Light on Light 1.4); mb = magic bursts; wsm / scm = per mob type ("WS@mob").',
+                 'return {', string.format('version = %q,', ver), 'format = 2,',
+                 string.format('master = %q,', tostring(GSC_KS.base_ver or '-'))}
+    local function block(name, K, fmt)
+        out[#out + 1] = name .. ' = {'
         local whos = {}
-        for w in pairs(K[kind] or {}) do whos[#whos + 1] = w end
+        for w in pairs(K or {}) do whos[#whos + 1] = w end
         table.sort(whos)
         for _, w in ipairs(whos) do
             out[#out + 1] = string.format('  [%q] = {', w)
             local keys = {}
-            for k in pairs(K[kind][w]) do keys[#keys + 1] = k end
+            for k in pairs(K[w]) do keys[#keys + 1] = k end
             table.sort(keys)
-            for _, k in ipairs(keys) do
-                local e = K[kind][w][k]
-                out[#out + 1] = string.format('    [%q] = {n = %d, a = %.3f, t = %d},', k, e.n, e.a, e.t or 0)
-            end
+            for _, k in ipairs(keys) do out[#out + 1] = string.format('    [%q] = ', k) .. fmt(K[w][k]) .. ',' end
             out[#out + 1] = '  },'
         end
         out[#out + 1] = '},'
+    end
+    for _, kind in ipairs(GSC_KINDS) do
+        block(kind, GSC_KO[kind], function(e) return string.format('{c = %d, s = %.3f, a = %.3f, t = %d}', e.c, e.s, e.a, e.t or 0) end)
+    end
+    for _, kind in ipairs(GSC_KINDS) do
+        block(GSC_KPRE[kind], GSC_KP[kind], function(e) return string.format('{n = %d, a = %.3f, t = %d}', e.n, e.a, e.t or 0) end)
     end
     out[#out + 1] = '}'
     local fh = io.open(path, 'wb')
@@ -5941,10 +6085,10 @@ function gsc_k_write(path, K, what)
 end
 function gsc_k_save()
     if GSC_KS.char then gsc_ns_save(GSC_KS.char) end   -- v4.92
-    if not GSC_KS.char or not GSC_KS.dirty then return end
+    if not GSC_KS.char or not GSC_KS.dirty or not GSC_KO then return end
     local dir = (windower.addon_path or '') .. 'data'
     if windower.dir_exists and windower.create_dir and not windower.dir_exists(dir) then windower.create_dir(dir) end
-    if gsc_k_write(gsc_k_path(GSC_KS.char), GSC_K, 'learning for ' .. GSC_KS.char) then
+    if gsc_k_write(gsc_k_path(GSC_KS.char), 'learning for ' .. GSC_KS.char) then
         GSC_KS.dirty = false
     else
         debug_msg('GSC: could not write ' .. gsc_k_path(GSC_KS.char))
@@ -5954,16 +6098,19 @@ end
 function gsc_k_add(kind, who, key, x)
     if gsc_cfg('learn') == false or not who or not key or not x or x <= 0 then return end
     gsc_k_ensure()
-    local K = GSC_K[kind]
+    local K = GSC_KO and GSC_KO[kind]
     if not K then return end
     local tw = K[who]
     if not tw then tw = {}; K[who] = tw end
     local e = tw[key]
-    if not e then e = {n = 0, a = 0, t = 0}; tw[key] = e end
-    e.n = e.n + 1
-    -- a plain average up to learn_cap samples, then a rolling one (gear changes)
-    e.a = e.a + (x - e.a) / math.min(e.n, math.max(gsc_num('learn_cap'), 1))
+    if not e then e = {c = 0, s = 0, a = 0, t = 0}; tw[key] = e end
+    e.c, e.s = e.c + 1, e.s + x
+    -- recent average: plain over the new samples, then rolling over learn_window (gear changes)
+    local nd = gsc_k_delta(kind, who, key)
+    e.a = e.a + (x - e.a) / math.min(math.max(nd, 1), gsc_k_win())
     e.t = os.time()
+    gsc_k_view(kind, who, key)
+    if kind == 'wsm' or kind == 'scm' then GSC_RMOB = {} end
     GSC_KS.dirty = true
     if os.clock() - GSC_KS.saved > gsc_num('learn_save_secs') then gsc_k_save() end
 end
@@ -5982,10 +6129,64 @@ function gsc_k_value(kind, who, key)
     if n >= mn then return s / n end
     return nil
 end
--- v4.92: learned value for the mob type being planned for (GSC_MOB), else nil
-function gsc_k_mob(kind, who, ws)
-    if not GSC_MOB or not ws then return nil end
-    return gsc_k_value(kind, who, ws .. '@' .. GSC_MOB)
+-- v4.98: how hard this mob type is hit, against the same WS everywhere -- all players'
+-- per-mob samples together (Demisang ~0.5, bats ~1.1). 1 until learn_min samples.
+function gsc_k_ratio(kind, mob)
+    local id = kind .. '|' .. mob
+    local c = GSC_RMOB[id]
+    if c then return c end
+    local mk, suf = (kind == 'ws') and 'wsm' or 'scm', '@' .. mob
+    local num, den, n = 0, 0, 0
+    for who, tw in pairs(GSC_K[mk] or {}) do
+        for key, e in pairs(tw) do
+            if #key > #suf and key:sub(-#suf) == suf then
+                local all = GSC_K[kind][who] and GSC_K[kind][who][key:sub(1, -#suf - 1)]
+                if all and all.a > 0 then
+                    local w = math.min(e.n, gsc_k_win())
+                    num, den, n = num + w * e.a, den + w * all.a, n + e.n
+                end
+            end
+        end
+    end
+    local r = (n >= gsc_num('learn_min') and den > 0) and (num / den) or 1
+    GSC_RMOB[id] = r
+    return r
+end
+-- v4.98: learned figure for the mob type being planned for (GSC_MOB): this player's
+-- figure for that mob, blended with (their all-mob figure x the mob's toughness) at
+-- mob_k samples' weight -- one kill already moves it, and a new mob type starts from
+-- the toughness the party has seen on it.
+function gsc_k_est(kind, who, ws)
+    local all = gsc_k_value(kind, who, ws)
+    local mob = GSC_MOB
+    if not mob or not ws then return all end
+    local mk = (kind == 'ws') and 'wsm' or 'scm'
+    local e = who and GSC_K[mk][who] and GSC_K[mk][who][ws .. '@' .. mob]
+    if not all then
+        if e and e.n >= math.max(gsc_num('learn_min'), 1) then return e.a end
+        return nil
+    end
+    local prior = all * gsc_k_ratio(kind, mob)
+    if not e or e.n <= 0 then return prior end
+    local n, k = math.min(e.n, gsc_k_win()), math.max(gsc_num('mob_k'), 0)
+    return (n * e.a + k * prior) / (n + k)
+end
+-- v4.98: a sample far under a settled average (odd_ratio of it, odd_min+ samples) is
+-- skipped -- unless odd_repeat come in a row (then it's real: a weapon / gear change)
+function gsc_k_odd(kind, who, key, x)
+    local e = GSC_K[kind] and GSC_K[kind][who] and GSC_K[kind][who][key]
+    local id = kind .. '|' .. tostring(who) .. '|' .. tostring(key)
+    if not e or e.n < gsc_num('odd_min') or x >= e.a * gsc_num('odd_ratio') then GSC_KODD[id] = nil; return false end
+    local run = (GSC_KODD[id] or 0) + 1
+    GSC_KODD[id] = run
+    if run >= gsc_num('odd_repeat') then
+        if run == gsc_num('odd_repeat') then
+            debug_msg(string.format('GSC: %s %s -- %d low samples in a row, learning them (%.1fk vs %.1fk).', tostring(who), tostring(key), run, x, e.a))
+        end
+        return false
+    end
+    debug_msg(string.format('GSC: %s %s %.1fk not learned -- under %d%% of its %.1fk average.', tostring(who), tostring(key), x, gsc_num('odd_ratio') * 100, e.a))
+    return true
 end
 -- v4.92: name of the mob an action hit
 function gsc_mob_of(act)
@@ -6019,6 +6220,8 @@ function gsc_learn_ws(act, name, a1)
         GSC_P.seen[key][name] = true
     end
     if a1.message ~= 188 and (tonumber(a1.param) or 0) > 0 then
+        gsc_k_ensure()
+        if gsc_k_odd('ws', who, name, a1.param / 1000) then return end   -- v4.98
         gsc_k_add('ws', who, name, a1.param / 1000)
         local mn = gsc_mob_of(act)   -- v4.92
         if mn then gsc_k_add('wsm', who, name .. '@' .. mn, a1.param / 1000) end
@@ -6031,6 +6234,8 @@ function gsc_learn_sc(act, name, a1, sc, ends)
     if not who or dmg <= 0 then return end
     local mult = ends and GSC_MULT['end'] or GSC_MULT[GSC_LEVEL[sc] or 0]
     if mult and mult > 0 then
+        gsc_k_ensure()
+        if gsc_k_odd('sc', who, name, dmg / 1000 / mult) then return end   -- v4.98
         gsc_k_add('sc', who, name, dmg / 1000 / mult)
         local mn = gsc_mob_of(act)   -- v4.92
         if mn then gsc_k_add('scm', who, name .. '@' .. mn, dmg / 1000 / mult) end
@@ -6300,8 +6505,10 @@ function gsc_on_entries(sender, rest)
         local key = (c == 'm') and 'MB' or gsc_ws_name(tonumber(id))
         if key then src[GSC_KKIND[c]][who][key] = {n = tonumber(n), a = tonumber(a), t = 0} end
     end
-    local ch = gsc_k_merge(GSC_K, src)
+    local ch = gsc_k_merge(GSC_KB, src)   -- v4.98: into the base (and kept for the release)
+    gsc_k_merge(GSC_KP, src)
     if ch > 0 then
+        gsc_k_rebuild()
         GSC_KS.dirty = true
         debug_msg('GSC: ' .. ch .. ' learned entries for ' .. who .. ' taken from ' .. sender .. '.')
     end
@@ -11111,6 +11318,25 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.98 - Group skillchain learning, step 1 (Mark, 2026-11-21: "review AA/GSC/WS
+        efficiency ... better ways to update dmg data / knowledge?").
+        * Vayne's Weapon Bash (DRK job ability) arrives as a category 3 action
+          with Ruinator's ID, so AA read it as a Ruinator WS: overnight 146 GSC
+          lines planned chains on it ("Ruinator >> Upheaval = Fusion", "Myth
+          continues Ruinator -- holding") and 131 samples of "Ruinator 0.24k"
+          were learned. Only WS messages (185, 187, 188, 189, 197, 224-226,
+          238) now count as a WS; the Ruinator junk is dropped.
+        * Learning file format 2: counts learned on this PC since the master,
+          and the master (aa_knowledge.lua) lists the counts it already holds
+          ("used"). Before, the file with more samples won and the other's news
+          was lost. Old files convert themselves at load.
+        * learn_window 60 (replaces learn_cap 200): the newest 60 samples count,
+          so a gear change shows within a night.
+        * Per mob type: this player's figure for the mob is blended with their
+          all-mob figure x the mob type's toughness (all players' samples on
+          it), mob_k 5 -- a new mob type is right after a kill or two.
+        * A sample under 25% (odd_ratio) of a settled average (odd_min 20
+          samples) is skipped unless 3 (odd_repeat) come in a row.
 v4.97 - Engage timing from the leader (Mark, 2026-11-21: "why is it taking so
         long for other party members to engage sometimes? ... add the log from
         Shadow, because I don't have the boxes for the others"). In PULL mode

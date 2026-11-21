@@ -246,7 +246,11 @@ local dread_spikes = {enabled = true,
 --                  data/aa_learned_<Character>.lua (aa_knowledge.lua = master)
 --   sync           true: share learned damage with the party on aa fight / join
 --   learn_min      samples before a learned figure replaces the built-in one
---   learn_cap      plain average up to this many samples, then a rolling one
+--   learn_cap      (before v4.98) no longer used -- see learn_window
+--   learn_window   v4.98: the newest this many samples make the learned figure (60)
+--   mob_k          v4.98: weight (in samples) of the mob type's toughness in its figure (5)
+--   odd_min / odd_ratio / odd_repeat  v4.98: a sample under odd_ratio of an average with
+--                  odd_min+ samples is skipped unless odd_repeat come in a row (20 / 0.25 / 3)
 --   pool_max       most WS planned per player when the pool is "all you know"
 --   weapon_hold    s a new job / weapon must stay (while idle) before it is sent
 --   mb_weight      share of the fillers' learned magic burst added per skillchain
@@ -272,7 +276,12 @@ local group_skillchain = {enabled = true,
 	learn          = true,
 	sync           = true,
 	learn_min      = 3,
-	learn_cap      = 200,
+	learn_cap      = 200,    -- not used since v4.98 (learn_window)
+	learn_window   = 60,     -- v4.98
+	mob_k          = 5,      -- v4.98
+	odd_min        = 20,     -- v4.98
+	odd_ratio      = 0.25,   -- v4.98
+	odd_repeat     = 3,      -- v4.98
 	learn_save_secs = 120,
 	sync_min       = 5,
 	pool_max       = 6,

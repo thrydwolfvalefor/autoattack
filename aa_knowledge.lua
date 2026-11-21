@@ -1,87 +1,92 @@
--- AutoAttack group skillchain knowledge (master) v4.97 -- built by make_release.py
--- from: aa_knowledge.lua, aa_learned_Shadowhammer.lua
+-- AutoAttack group skillchain knowledge (master) v4.98 -- built by make_release.py
+-- from: aa_knowledge.lua, aa_learned_Shadowhammer.lua (old format)
 -- [kind][player][weapon skill] = {n = samples, a = average (thousands), t = last update}
 -- ws = WS damage; sc = skillchain damage when this WS closes it, as Light-equivalent
 -- (Light 1.0, level 2 0.55, level 1 0.25, Light on Light 1.4); mb = magic bursts
+-- wsm / scm = the same per mob type ("WS@mob").
+-- used = {character, kind, player, key, samples}: what of each learning file this
+-- master already holds (v4.98) -- only samples past it count as new.
 -- Shipped by every release; aa update replaces it. Your own learning is in
 -- data/aa_learned_<Character>.lua and is never replaced.
 return {
-version = "4.97",
+version = "4.98",
 ws = {
   ["Mythrandiir"] = {
-    ["Tachi: Fudo"] = {n = 74, a = 8.107, t = 1795257664},
-    ["Tachi: Kasha"] = {n = 86, a = 8.484, t = 1795257656},
-    ["Tachi: Shoha"] = {n = 73, a = 7.847, t = 1795257672},
+    ["Tachi: Fudo"] = {n = 488, a = 8.642, t = 1795279879},
+    ["Tachi: Kasha"] = {n = 596, a = 9.235, t = 1795279948},
+    ["Tachi: Shoha"] = {n = 639, a = 9.219, t = 1795279978},
   },
   ["Scracheebrat"] = {
-    ["Savage Blade"] = {n = 34, a = 7.453, t = 1795257490},
+    ["Savage Blade"] = {n = 90, a = 8.625, t = 1795279897},
   },
   ["Shadowhammer"] = {
-    ["Full Break"] = {n = 80, a = 2.806, t = 1795257692},
-    ["Ukko's Fury"] = {n = 137, a = 13.476, t = 1795257676},
-    ["Upheaval"] = {n = 147, a = 15.818, t = 1795257704},
+    ["Full Break"] = {n = 534, a = 2.834, t = 1795279918},
+    ["Ukko's Fury"] = {n = 962, a = 13.647, t = 1795279932},
+    ["Upheaval"] = {n = 932, a = 16.971, t = 1795279955},
   },
   ["Vayne"] = {
-    ["Cross Reaper"] = {n = 61, a = 10.413, t = 1795257686},
-    ["Ruinator"] = {n = 19, a = 0.243, t = 1795257706},
+    ["Cross Reaper"] = {n = 499, a = 12.401, t = 1795279950},
   },
 },
 sc = {
   ["Mythrandiir"] = {
-    ["Tachi: Fudo"] = {n = 48, a = 18.080, t = 1795257664},
-    ["Tachi: Kasha"] = {n = 71, a = 16.215, t = 1795257656},
-    ["Tachi: Shoha"] = {n = 45, a = 17.469, t = 1795257672},
+    ["Tachi: Fudo"] = {n = 350, a = 18.346, t = 1795279879},
+    ["Tachi: Kasha"] = {n = 453, a = 17.761, t = 1795279948},
+    ["Tachi: Shoha"] = {n = 392, a = 23.291, t = 1795279853},
   },
   ["Scracheebrat"] = {
-    ["Savage Blade"] = {n = 23, a = 10.920, t = 1795257256},
+    ["Savage Blade"] = {n = 60, a = 15.248, t = 1795279238},
   },
   ["Shadowhammer"] = {
-    ["Ukko's Fury"] = {n = 101, a = 27.118, t = 1795257676},
-    ["Upheaval"] = {n = 80, a = 26.211, t = 1795257650},
+    ["Full Break"] = {n = 4, a = 5.748, t = 1795279918},
+    ["Ukko's Fury"] = {n = 731, a = 28.273, t = 1795279932},
+    ["Upheaval"] = {n = 668, a = 29.407, t = 1795279941},
   },
   ["Vayne"] = {
-    ["Cross Reaper"] = {n = 4, a = 22.000, t = 1795257479},
+    ["Cross Reaper"] = {n = 120, a = 20.417, t = 1795279809},
   },
 },
 mb = {
   ["Scracheebrat"] = {
-    ["MB"] = {n = 92, a = 6.764, t = 1795257680},
+    ["MB"] = {n = 610, a = 6.489, t = 1795279893},
   },
 },
 wsm = {
   ["Mythrandiir"] = {
-    ["Tachi: Fudo@Locus Dire Bat"] = {n = 48, a = 8.525, t = 1795257664},
-    ["Tachi: Kasha@Locus Dire Bat"] = {n = 54, a = 8.715, t = 1795257656},
-    ["Tachi: Shoha@Locus Dire Bat"] = {n = 52, a = 7.633, t = 1795257672},
+    ["Tachi: Fudo@Locus Dire Bat"] = {n = 462, a = 8.682, t = 1795279879},
+    ["Tachi: Kasha@Locus Dire Bat"] = {n = 564, a = 9.255, t = 1795279948},
+    ["Tachi: Shoha@Locus Dire Bat"] = {n = 617, a = 9.214, t = 1795279935},
   },
   ["Scracheebrat"] = {
-    ["Savage Blade@Locus Dire Bat"] = {n = 18, a = 7.510, t = 1795257490},
+    ["Savage Blade@Locus Dire Bat"] = {n = 74, a = 8.892, t = 1795279897},
   },
   ["Shadowhammer"] = {
-    ["Full Break@Locus Dire Bat"] = {n = 63, a = 2.813, t = 1795257692},
-    ["Ukko's Fury@Locus Dire Bat"] = {n = 110, a = 13.397, t = 1795257676},
-    ["Upheaval@Locus Dire Bat"] = {n = 116, a = 16.218, t = 1795257704},
+    ["Full Break@Locus Dire Bat"] = {n = 517, a = 2.836, t = 1795279918},
+    ["Ukko's Fury@Locus Dire Bat"] = {n = 935, a = 13.647, t = 1795279932},
+    ["Upheaval@Locus Dire Bat"] = {n = 901, a = 16.978, t = 1795279955},
   },
   ["Vayne"] = {
-    ["Cross Reaper@Locus Dire Bat"] = {n = 61, a = 10.413, t = 1795257686},
-    ["Ruinator@Locus Dire Bat"] = {n = 19, a = 0.243, t = 1795257706},
+    ["Cross Reaper@Locus Dire Bat"] = {n = 499, a = 12.401, t = 1795279950},
   },
 },
 scm = {
   ["Mythrandiir"] = {
-    ["Tachi: Fudo@Locus Dire Bat"] = {n = 39, a = 19.315, t = 1795257664},
-    ["Tachi: Kasha@Locus Dire Bat"] = {n = 52, a = 17.459, t = 1795257656},
-    ["Tachi: Shoha@Locus Dire Bat"] = {n = 30, a = 19.206, t = 1795257672},
+    ["Tachi: Fudo@Locus Dire Bat"] = {n = 341, a = 18.472, t = 1795279879},
+    ["Tachi: Kasha@Locus Dire Bat"] = {n = 434, a = 17.885, t = 1795279948},
+    ["Tachi: Shoha@Locus Dire Bat"] = {n = 377, a = 23.535, t = 1795279853},
   },
   ["Scracheebrat"] = {
-    ["Savage Blade@Locus Dire Bat"] = {n = 12, a = 13.462, t = 1795257256},
+    ["Savage Blade@Locus Dire Bat"] = {n = 49, a = 16.843, t = 1795279238},
   },
   ["Shadowhammer"] = {
-    ["Ukko's Fury@Locus Dire Bat"] = {n = 83, a = 27.696, t = 1795257676},
-    ["Upheaval@Locus Dire Bat"] = {n = 73, a = 27.227, t = 1795257650},
+    ["Full Break@Locus Dire Bat"] = {n = 4, a = 5.748, t = 1795279918},
+    ["Ukko's Fury@Locus Dire Bat"] = {n = 713, a = 28.298, t = 1795279932},
+    ["Upheaval@Locus Dire Bat"] = {n = 661, a = 29.446, t = 1795279941},
   },
   ["Vayne"] = {
-    ["Cross Reaper@Locus Dire Bat"] = {n = 4, a = 22.000, t = 1795257479},
+    ["Cross Reaper@Locus Dire Bat"] = {n = 120, a = 20.417, t = 1795279809},
   },
+},
+used = {
 },
 }
