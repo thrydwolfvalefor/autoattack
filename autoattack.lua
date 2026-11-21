@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.94'
+_addon.version  = '4.95'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -6526,6 +6526,55 @@ end
 -- v3.42: For the LOCAL player, the server does NOT send a 0x076 party buff packet
 -- for their own slot, so party[pX].buffs is nil/empty for them. Return player.buffs
 -- (from get_player()) directly when the name matches the local character.
+-- v4.95: party members' buffs from packet 0x076 (Party Buffs). Windower's
+-- get_party() has no .buffs, so Scrach's Haste II on Shadow ran on the
+-- buff_duration timer alone (300s, while it lasted ~256s on him) and never
+-- noticed a cast that didn't land. 0x076: up to 5 entries of 48 bytes from
+-- offset 4 -- ID (4), index (2), 2 unused, 64-bit mask (2 high bits per buff),
+-- 32 buff low bytes (255 = none). Buff ID = low + 256 * high bits.
+PARTY_BUFFS = {}   -- [player id] = {at = os.clock(), ids = {...}}
+PARTY_BUFFS_FRESH = 600   -- s: older data is ignored (left the party, packet stopped)
+function party_buffs_parse(data)
+    if type(data) ~= 'string' then return end
+    for e = 0, 4 do
+        local b = 4 + e * 48            -- 0-based offset of the entry
+        if #data < b + 48 then break end
+        local id = data:byte(b + 1) + data:byte(b + 2) * 256 + data:byte(b + 3) * 65536 + data:byte(b + 4) * 16777216
+        if id > 0 then
+            local ids = {}
+            for k = 0, 31 do
+                local low = data:byte(b + 17 + k)
+                if low ~= 255 then
+                    local mb = data:byte(b + 9 + math.floor(k / 4))
+                    local hi = math.floor(mb / (2 ^ ((k % 4) * 2))) % 4
+                    ids[#ids + 1] = low + 256 * hi
+                end
+            end
+            PARTY_BUFFS[id] = {at = os.clock(), ids = ids}
+        end
+    end
+end
+function party_buffs_of(member)
+    local id = member and ((member.mob and member.mob.id) or member.id)
+    local e = id and PARTY_BUFFS[id]
+    if e and os.clock() - e.at < PARTY_BUFFS_FRESH then return e.ids end
+    return nil
+end
+-- v4.95: can this party member be buffed right now? (same zone, in view, alive,
+-- in range). A member who can't was still picked first, the cast was skipped,
+-- and the timer never moved -- so one member away (Mythrandiir in another zone)
+-- blocked Haste II for everyone after him in the party list.
+function buff_member_ok(member, entry, player_data)
+    if not member or not member.name then return false end
+    if player_data and player_data.name and member.name:lower() == player_data.name:lower() then return true end
+    local info = windower.ffxi.get_info()
+    if member.zone and info and info.zone and member.zone ~= info.zone then return false end
+    local mob = member.mob or windower.ffxi.get_mob_by_name(member.name)
+    if not mob or not mob.distance then return false end
+    if (member.hpp or mob.hpp or 1) <= 0 then return false end
+    if mob.distance:sqrt() > ((entry and entry.max_dist) or 21) then return false end
+    return true
+end
 local function get_member_buffs(t_name, player_data, party_data)
     if not t_name then return nil end
     if t_name == '<me>' then
@@ -6540,7 +6589,7 @@ local function get_member_buffs(t_name, player_data, party_data)
         for key, member in pairs(party_data) do
             if type(member) == 'table' and type(key) == 'string' and key:match('^p[0-5]$') then
                 if member.name and member.name:lower() == t_name:lower() then
-                    return member.buffs or nil
+                    return member.buffs or party_buffs_of(member)   -- v4.95: 0x076
                 end
             end
         end
@@ -6658,7 +6707,7 @@ function use_magic(buff_only)
                             end
                         end
 
-                        if passes_only and not in_skip and passes_mage then
+                        if passes_only and not in_skip and passes_mage and buff_member_ok(member, entry, player) then   -- v4.95
                             local tk    = entry.name .. '||' .. member.name
                             local t_now = os.time()
                             local t_last = magic_last_used[tk] or 0
@@ -10957,6 +11006,21 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.95 - Party buffs (Haste II) reach everyone (Mark, 2026-11-21: "review the
+        code for Scrach to cast Haste II on the party? I am not getting it
+        consistently").
+        * buff_party picked the first member whose timer said "due" even if
+          that member couldn't be cast on (another zone, not in view, out of
+          range, dead). The cast was skipped, the timer never moved, and the
+          same member was picked again every tick: Mythrandiir in another zone
+          blocked Haste II for everyone after him (Shadow's wore off at
+          02:50:59 and wasn't recast for 8+ minutes; Scrach still hasted
+          himself at 02:54). Those members are now skipped (buff_member_ok).
+        * Party members' buffs are read from packet 0x076 (PARTY_BUFFS). get_party()
+          has no .buffs, so remote members ran on buff_duration alone (300s,
+          while Haste II lasted ~256s on Shadow) and a cast that didn't land
+          was never noticed. Now: recast when it wears off; BUFF VERIFY sees a
+          miss and retries in 30s. No 0x076 data -> the old timer.
 v4.94 - Group skillchain after a reload mid-fight; POSITION (Mark, 2026-11-21,
         bats with Vayne, Scrach and Shadow: "Is there any changes that need to
         be made based on how GSC is working / sharing data").
@@ -11358,6 +11422,7 @@ local function handle_cant_see(is_facing_msg)
 end
 
 windower.register_event('incoming chunk', function(id, data)
+    if id == 0x076 then party_buffs_parse(data) end   -- v4.95: party members' buffs
     if not data then return end
     -- v3.98: only 4 packet IDs matter; return before creating the pcall closure
     -- (this handler runs for every incoming packet -- hundreds per second).
@@ -11745,6 +11810,7 @@ end)
 -- v4.18: the event is 'zone change' (with a space). 'zone_change' was never
 -- registered (console: "Unknown event: zone_change"), so none of this ran.
 windower.register_event('zone change', function(new_id, old_id)
+    PARTY_BUFFS = {}   -- v4.95
     if auto_attack then
         info_msg('Zone change detected: stopping auto-attack.')
         auto_attack = false
