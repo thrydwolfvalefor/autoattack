@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.91'
+_addon.version  = '4.92'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -5069,13 +5069,13 @@ end
 function gsc_power(ws, who)
     local p = gsc_cfg('power')
     local v = type(p) == 'table' and tonumber(p[ws]) or nil
-    return v or gsc_k_value('ws', who, ws) or GSC_POWER[ws] or 6   -- v4.90: learned damage
+    return v or gsc_k_mob('wsm', who, ws) or gsc_k_value('ws', who, ws) or GSC_POWER[ws] or 6   -- v4.90: learned damage (v4.92: this mob type first)
 end
 -- v4.72: Light skillchain damage when this WS closes it
 function gsc_scpower(ws, who)
     local p = gsc_cfg('sc_power')
     local v = type(p) == 'table' and tonumber(p[ws]) or nil
-    return v or gsc_k_value('sc', who, ws) or GSC_SCPOWER[ws] or 18   -- v4.90: learned
+    return v or gsc_k_mob('scm', who, ws) or gsc_k_value('sc', who, ws) or GSC_SCPOWER[ws] or 18   -- v4.90: learned (v4.92: this mob type first)
 end
 -- v4.72: damage of a WS that makes skillchain r (level l, term = chain ends)
 function gsc_value(ws, l, term, who)
@@ -5196,7 +5196,7 @@ function gsc_pool(weapon, isme, id, name)
     if not isme then   -- v4.71: minus WS this player passed on noshow_max times
         local out, mx = {}, gsc_num('noshow_max')
         for _, ws in ipairs(list) do
-            if mx <= 0 or (GSC.noshow[tostring(id) .. '|' .. ws] or 0) < mx then out[#out + 1] = ws end
+            if mx <= 0 or ((GSC.noshow[tostring(id) .. '|' .. ws] or 0) < mx and not gsc_ns_has(name, ws)) then out[#out + 1] = ws end
         end
         return out
     end
@@ -5299,7 +5299,9 @@ function gsc_continuers(mem, props, last_actor)
     local out, soon = {}, gsc_num('soon_tp')
     for _, m in ipairs(mem) do
         -- v4.73: a teammate keeps their place from block_tp (their TP is seen late)
-        if m.engaged and m.tp >= (m.me and soon or gsc_num('block_tp')) then
+        -- v4.92: a filler (Scrach) only from 1000 TP: in Sortie he was the
+        -- expected closer 21 times and delivered 2 (busy casting)
+        if m.engaged and m.tp >= (m.me and soon or (m.filler and 1000) or gsc_num('block_tp')) then
             local best
             for _, ws in ipairs(m.pool) do
                 local r, l, term = gsc_result(props, ws)
@@ -5387,6 +5389,7 @@ function gsc_tick()
     if not pl or not pl.vitals or not t or not t.id or not t.hpp or t.hpp <= 0 then return 'wait' end
     local now = os.clock()
     if GSC.mob ~= t.id then GSC.mob, GSC.mob_since = t.id, now end
+    GSC_MOB = t.name   -- v4.92: learned damage for this mob type
     local mem = gsc_members()
     local me
     for _, m in ipairs(mem) do if m.me then me = m end end
@@ -5549,6 +5552,7 @@ function gsc_on_action(act)
     local c = GSC.chain
     -- v4.71: no-show learning -- the player we waited on used something else
     GSC.noshow[act.actor_id .. '|' .. name] = nil
+    gsc_ns_set(gsc_player_name(act.actor_id), name, false)   -- v4.92: they use it again
     local ex = GSC.expect
     if ex and c and ex.t == c.t then
         if not (act.actor_id == ex.id and name == ex.ws) then
@@ -5556,8 +5560,9 @@ function gsc_on_action(act)
             GSC.noshow[k] = (GSC.noshow[k] or 0) + 1
             if GSC.noshow[k] == gsc_num('noshow_max') then
                 local _pm = windower.ffxi.get_mob_by_id and windower.ffxi.get_mob_by_id(ex.id)
+                if _pm and _pm.name then gsc_ns_set(_pm.name, ex.ws, true); pcall(gsc_k_save) end   -- v4.92: kept across reloads
                 info_msg('GSC: ' .. tostring(_pm and _pm.name or ex.id) .. ' passed on ' .. ex.ws .. ' ' .. GSC.noshow[k] ..
-                         'x -- not planning it for them this session.')
+                         'x -- not planning it for them for ' .. math.floor(NOSHOW_KEEP / 3600) .. 'h (or until they use it).')
             end
         end
         GSC.expect = nil
@@ -5648,10 +5653,15 @@ end
 -- Globals on purpose (main chunk is at the local / upvalue limit).
 -- =========================================================================
 GSC_PROTO = 1
-GSC_KINDS = {'ws', 'sc', 'mb'}
+GSC_KINDS = {'ws', 'sc', 'mb', 'wsm', 'scm'}
+-- v4.92: wsm / scm = the same as ws / sc for one mob type ("Upheaval@Locus Dire
+-- Bat"): Demisang mobs in Sortie took about half the damage of the bats
+-- (Light 12.6k vs 31k). Local only -- not sent by the knowledge sync.
+GSC_KINDS_SYNC = {'ws', 'sc', 'mb'}
+GSC_MOB = nil   -- name of the mob the plan is for (set by gsc_tick)
 GSC_RESPROPS, GSC_WSID = nil, nil
 GSC_MBV = 0
-GSC_K  = {ws = {}, sc = {}, mb = {}}
+GSC_K  = {ws = {}, sc = {}, mb = {}, wsm = {}, scm = {}}
 GSC_KS = {char = nil, dirty = false, saved = 0, base_ver = nil}
 GSC_P  = {prof = {}, seen = {}, sent = -100, pend = nil, sig = nil, sig_at = 0, sig_sent = nil,
           dig = {}, dig_mine_at = -100, dig_eval = nil, watch_at = 0}
@@ -5692,6 +5702,42 @@ function gsc_ws_level(ws)
 end
 
 -- ---------------------------------------------------------------- knowledge
+-- v4.92: "passed on X noshow_max times" survives a reload (Mark reloads after
+-- every battle; on 11-21 it was re-learned 3 times in an hour). Kept per
+-- player name for NOSHOW_KEEP s; cleared when that player uses the WS again.
+GSC_NS, GSC_NS_DIRTY = {}, false
+NOSHOW_KEEP = 6 * 3600
+function gsc_ns_key(name, ws) return tostring(name):lower() .. '|' .. tostring(ws) end
+function gsc_ns_has(name, ws)
+    local t = name and GSC_NS[gsc_ns_key(name, ws)]
+    return t ~= nil and os.time() - t < NOSHOW_KEEP
+end
+function gsc_ns_set(name, ws, on)
+    if not name then return end
+    local k = gsc_ns_key(name, ws)
+    local v = on and os.time() or nil
+    if GSC_NS[k] ~= v then GSC_NS[k] = v; GSC_NS_DIRTY = true end
+end
+function gsc_ns_path(char) return (windower.addon_path or '') .. 'data/aa_noshow_' .. char .. '.lua' end
+function gsc_ns_load(char)
+    GSC_NS, GSC_NS_DIRTY = {}, false
+    local t = gsc_k_read(gsc_ns_path(char))
+    for k, v in pairs(type(t) == 'table' and t or {}) do
+        if type(k) == 'string' and tonumber(v) and os.time() - tonumber(v) < NOSHOW_KEEP then GSC_NS[k] = tonumber(v) end
+    end
+end
+function gsc_ns_save(char)
+    if not char or not GSC_NS_DIRTY then return end
+    local out = {'-- AutoAttack: weapon skills a teammate kept passing on (group skillchain), by ' .. char,
+                 '-- ["player|weapon skill"] = os.time() when it was marked; kept ' .. NOSHOW_KEEP .. 's', 'return {'}
+    local keys = {}
+    for k in pairs(GSC_NS) do keys[#keys + 1] = k end
+    table.sort(keys)
+    for _, k in ipairs(keys) do out[#out + 1] = string.format('  [%q] = %d,', k, GSC_NS[k]) end
+    out[#out + 1] = '}'
+    local fh = io.open(gsc_ns_path(char), 'wb')
+    if fh then fh:write(table.concat(out, '\n') .. '\n'); fh:close(); GSC_NS_DIRTY = false end
+end
 function gsc_k_path(name)
     local dir = windower.addon_path or ''
     if not name then return dir .. 'aa_knowledge.lua' end
@@ -5740,12 +5786,13 @@ function gsc_k_ensure()
     local name = pl and pl.name
     if not name or name == GSC_KS.char then return end
     if GSC_KS.char and GSC_KS.dirty then gsc_k_save() end
-    GSC_K = {ws = {}, sc = {}, mb = {}}
+    GSC_K = {ws = {}, sc = {}, mb = {}, wsm = {}, scm = {}}
     local base = gsc_k_read(gsc_k_path(nil))
     if base then gsc_k_merge(GSC_K, base) end
     local own = gsc_k_read(gsc_k_path(name))
     if own then gsc_k_merge(GSC_K, own) end
     GSC_KS.char, GSC_KS.dirty, GSC_KS.saved = name, false, os.clock()
+    gsc_ns_load(name)   -- v4.92
     GSC_KS.base_ver = base and base.version or nil
     local n = 0
     for _, v in pairs(gsc_k_totals()) do n = n + v end
@@ -5785,6 +5832,7 @@ function gsc_k_write(path, K, what)
     return true
 end
 function gsc_k_save()
+    if GSC_KS.char then gsc_ns_save(GSC_KS.char) end   -- v4.92
     if not GSC_KS.char or not GSC_KS.dirty then return end
     local dir = (windower.addon_path or '') .. 'data'
     if windower.dir_exists and windower.create_dir and not windower.dir_exists(dir) then windower.create_dir(dir) end
@@ -5826,9 +5874,20 @@ function gsc_k_value(kind, who, key)
     if n >= mn then return s / n end
     return nil
 end
+-- v4.92: learned value for the mob type being planned for (GSC_MOB), else nil
+function gsc_k_mob(kind, who, ws)
+    if not GSC_MOB or not ws then return nil end
+    return gsc_k_value(kind, who, ws .. '@' .. GSC_MOB)
+end
+-- v4.92: name of the mob an action hit
+function gsc_mob_of(act)
+    local t1 = act and type(act.targets) == 'table' and act.targets[1]
+    local m = t1 and t1.id and windower.ffxi.get_mob_by_id(t1.id)
+    return m and m.name or nil
+end
 function gsc_k_totals()
     local tot = {}
-    for _, kind in ipairs(GSC_KINDS) do
+    for _, kind in ipairs(GSC_KINDS_SYNC) do   -- v4.92: per-mob kinds aren't synced
         for who, tw in pairs(GSC_K[kind] or {}) do
             for _, e in pairs(tw) do tot[who] = (tot[who] or 0) + e.n end
         end
@@ -5851,7 +5910,11 @@ function gsc_learn_ws(act, name, a1)
         GSC_P.seen[key] = GSC_P.seen[key] or {}
         GSC_P.seen[key][name] = true
     end
-    if a1.message ~= 188 and (tonumber(a1.param) or 0) > 0 then gsc_k_add('ws', who, name, a1.param / 1000) end
+    if a1.message ~= 188 and (tonumber(a1.param) or 0) > 0 then
+        gsc_k_add('ws', who, name, a1.param / 1000)
+        local mn = gsc_mob_of(act)   -- v4.92
+        if mn then gsc_k_add('wsm', who, name .. '@' .. mn, a1.param / 1000) end
+    end
 end
 -- skillchain damage, as Light-equivalent, credited to the closing WS
 function gsc_learn_sc(act, name, a1, sc, ends)
@@ -5859,7 +5922,11 @@ function gsc_learn_sc(act, name, a1, sc, ends)
     local dmg = tonumber(a1.add_effect_param) or 0
     if not who or dmg <= 0 then return end
     local mult = ends and GSC_MULT['end'] or GSC_MULT[GSC_LEVEL[sc] or 0]
-    if mult and mult > 0 then gsc_k_add('sc', who, name, dmg / 1000 / mult) end
+    if mult and mult > 0 then
+        gsc_k_add('sc', who, name, dmg / 1000 / mult)
+        local mn = gsc_mob_of(act)   -- v4.92
+        if mn then gsc_k_add('scm', who, name .. '@' .. mn, dmg / 1000 / mult) end
+    end
 end
 -- magic burst damage by a party player (spell, message 252)
 function gsc_learn_mb(act)
@@ -6096,7 +6163,7 @@ GSC_KCODE = {ws = 'w', sc = 's', mb = 'm'}
 GSC_KKIND = {w = 'ws', s = 'sc', m = 'mb'}
 function gsc_send_entries(who)
     local items = {}
-    for _, kind in ipairs(GSC_KINDS) do
+    for _, kind in ipairs(GSC_KINDS_SYNC) do   -- v4.92
         for key, e in pairs(GSC_K[kind][who] or {}) do
             local id = (kind == 'mb') and 0 or gsc_ws_id(key)
             if id then items[#items + 1] = string.format('%d%s%d:%.2f', id, GSC_KCODE[kind], e.n, e.a) end
@@ -10882,6 +10949,20 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.92 - Group skillchain learning per mob type; no-show list kept; caster
+        closers from 1000 TP (Mark, 2026-11-21, after a Sortie hour: "Different
+        mobs have different defenses, so tracking dmg per mob might be
+        preferred ... Please make the suggested changes as well").
+        * Learned WS and skillchain damage is also kept per mob type (wsm /
+          scm, "Upheaval@Locus Dire Bat"). The plan uses the mob type's own
+          numbers once there are learn_min samples, else the all-mob average.
+          Per-mob numbers stay on each PC (not synced); make_release merges
+          them into the master like the rest.
+        * "<player> passed on <WS> 3x" is saved (data/aa_noshow_<Char>.lua)
+          and kept 6h or until that player uses the WS again -- a reload no
+          longer forgets it.
+        * A filler (Scrach) counts as a continuer only from 1000 TP as you see
+          it (was 500): in Sortie he was expected 21 times and went twice.
 v4.91 - Teammates' group skillchain lines hidden (Mark, 2026-11-20 23:55: Myth's
         and Scrach's "aa~g p ..." showed in Shadow's party chat; his own were
         hidden). A teammate's aa~g party line is now dropped as a packet
