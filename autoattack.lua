@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '4.95'
+_addon.version  = '4.96'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -5024,7 +5024,7 @@ GSC_DEF = {
     enabled = true, min_players = 2, soon_tp = 750,
     window_open = 3.2, window_close = 10.0, window_step = 0, window_min = 8.0, ws_lead = 1.2,
     handoff_wait = 1.5, opener_wait = 2.0, max_steps = 8, plan_depth = 3, filler_wait_tp = 600,
-    bank_hpp = 10, noshow_max = 3, block_tp = 500, pre_wait = 6.0,
+    bank_hpp = 10, noshow_max = 3, block_tp = 500, pre_wait = 6.0, tp_cap = 2900,
     once_per_mob = {['Great Axe'] = 'Full Break'},
     filler_jobs = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
     fillers = {},
@@ -5338,6 +5338,12 @@ function gsc_openers(mem)
                 local key = gsc_follow(gsc_props(ws), gsc_num('plan_depth'), m.id, mem, 1) + gsc_power(ws, m.name)
                 if not best or key > best.key then best = {m = m, ws = ws, key = key} end
             end
+            -- v4.96: at the TP cap, every melee round's TP is lost -- that player
+            -- opens first. On 11-21 Vayne (DRK, Cross Reaper only -- it can't
+            -- continue the party's Light / Fusion) ranked below Shadow and Myth
+            -- every time, sat at 3000 TP, used 22 WS in 30 min (Shadow 151) and
+            -- 19 of them landed on top of someone else's chain.
+            if best and m.tp >= gsc_num('tp_cap') then best.key = best.key + 100; best.capped = true end
             if best then out[#out + 1] = best end
         end
     end
@@ -5510,8 +5516,8 @@ function gsc_tick()
     for k, op in ipairs(ops) do
         if op.m.me then
             if now >= idle_since + (k - 1) * gsc_num('opener_wait') then
-                return gsc_fire(t, op.ws, op.ws .. ' (opener' ..
-                    ((op.key >= 10) and string.format(', plan value %.0f', op.key) or '') .. ')')
+                return gsc_fire(t, op.ws, op.ws .. ' (opener' .. (op.capped and ', TP capped' or
+                    ((op.key >= 10) and string.format(', plan value %.0f', op.key) or '')) .. ')')
             end
             gsc_dbg('open', 'GSC: ' .. ops[1].m.name .. ' opens with ' .. ops[1].ws .. ' -- waiting my turn.')
             return 'wait'
@@ -11006,6 +11012,15 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v4.96 - A player at the TP cap opens first (Mark, 2026-11-21: "are there
+        any other changes needed to improve efficiency? is the GSC tracking and
+        usage plans working?"). Tracking and plans work (profiles, knowledge,
+        Myth continued 40 of 61 times he was expected), but Vayne (DRK, Cross
+        Reaper only -- it can't continue the party's Light / Fusion) always
+        ranked below Shadow's and Myth's openers: he sat at 3000 TP, used 22 WS
+        in 30 minutes (Shadow 151, Myth 125), and 19 of them landed on top of
+        someone else's chain. Openers at group_skillchain.tp_cap (2900) or more
+        now go first (log: "(opener, TP capped)"); the others wait their turn.
 v4.95 - Party buffs (Haste II) reach everyone (Mark, 2026-11-21: "review the
         code for Scrach to cast Haste II on the party? I am not getting it
         consistently").

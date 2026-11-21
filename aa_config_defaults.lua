@@ -279,6 +279,7 @@ local group_skillchain = {enabled = true,
 	weapon_hold    = 3,
 	mb_weight      = 0.5,
 	pre_wait       = 6.0,    -- v4.87: s others hold their opener for a teammate's once-per-mob WS (Full Break)
+	tp_cap         = 2900,   -- v4.96: a player at this TP or more opens first (TP past 3000 is lost)
 	once_per_mob   = {['Great Axe'] = 'Full Break'},
 	filler_jobs    = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
 	fillers        = {},
