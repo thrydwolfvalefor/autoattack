@@ -86,7 +86,8 @@ local D = {
 }
 local function opt(k)
     local c = AA_CFG and AA_CFG.party
-    local v = type(c) == 'table' and c[k] or nil
+    local v = nil
+    if type(c) == 'table' then v = c[k] end   -- v5.04: 'x and c[k] or nil' turned false into nil
     if v == nil then return D[k] end
     return v
 end

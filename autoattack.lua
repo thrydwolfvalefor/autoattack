@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.03'
+_addon.version  = '5.04'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -4335,6 +4335,8 @@ function party_all_on(mob_id, since)
 end
 -- v5.00: TP each party player had at 1000+, last seen (for TP-banded learning)
 GSC_TPS = {}
+-- v5.04: each player's TP gain per second, from the TP changes the party list shows
+GSC_TPR = {}   -- [name] = {tp = last TP, t = when it last changed, rate = TP/s (smoothed)}
 function gsc_tp_track()
     local party = windower.ffxi.get_party()
     if not party then return end
@@ -4342,7 +4344,29 @@ function gsc_tp_track()
     for k = 0, 5 do
         local m = party['p' .. k]
         if type(m) == 'table' and m.name and (tonumber(m.tp) or 0) >= 1000 then GSC_TPS[m.name] = {tp = m.tp, t = now} end
+        local tp = type(m) == 'table' and m.name and tonumber(m.tp)
+        if tp then
+            local r = GSC_TPR[m.name]
+            if not r then
+                GSC_TPR[m.name] = {tp = tp, t = now}
+            elseif tp > r.tp then
+                local dt = now - r.t
+                if dt >= 0.5 and dt <= 20 then
+                    local inst = (tp - r.tp) / dt
+                    r.rate = r.rate and (0.7 * r.rate + 0.3 * inst) or inst
+                end
+                r.tp, r.t = tp, now
+            elseif tp < r.tp then
+                r.tp, r.t = tp, now   -- spent on a WS: new baseline
+            end
+        end
     end
+end
+-- v5.04: TP a teammate should have by time `at` (nil when we have no rate yet)
+function gsc_tp_by(name, tp, at)
+    local r = name and GSC_TPR[name]
+    if not r or not r.rate then return nil end
+    return (tp or 0) + r.rate * math.max(0, at - os.clock())
 end
 function gsc_tp_at(who)
     local e = who and GSC_TPS[who]
@@ -5569,6 +5593,7 @@ GSC_DEF = {
     handoff_wait = 1.5, opener_wait = 2.0, max_steps = 8, plan_depth = 3, filler_wait_tp = 600,
     bank_hpp = 10, noshow_max = 3, block_tp = 500, pre_wait = 6.0, tp_cap = 2900,
     burst = true, nuke_hold = true, tp_band = 500, band_min = 5,   -- v5.00
+    tp_project = true,   -- v5.04
     once_per_mob = {['Great Axe'] = 'Full Break'},
     filler_jobs = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
     fillers = {},
@@ -5606,7 +5631,8 @@ GSC = {on = nil, chain = nil, jobs = {}, began = {}, pre_done = {}, pre_n = 0, m
 
 function gsc_cfg(k)
     local c = AA_CFG and AA_CFG.group_skillchain
-    local v = (type(c) == 'table') and c[k] or nil
+    local v = nil
+    if type(c) == 'table' then v = c[k] end   -- v5.04: 'x and c[k] or nil' turned false into nil
     if v == nil then return GSC_DEF[k] end
     return v
 end
@@ -5852,7 +5878,20 @@ function gsc_continuers(mem, props, last_actor)
         -- v4.73: a teammate keeps their place from block_tp (their TP is seen late)
         -- v4.92: a filler (Scrach) only from 1000 TP: in Sortie he was the
         -- expected closer 21 times and delivered 2 (busy casting)
-        if m.engaged and m.tp >= (m.me and soon or (m.filler and 1000) or gsc_num('block_tp')) then
+        local ok_tp = m.engaged and m.tp >= (m.me and soon or (m.filler and 1000) or gsc_num('block_tp'))
+        -- v5.04: a teammate under 1000 TP only keeps a place when their TP gain gets
+        -- them to 1000 before the window closes (11-22: Shadow held for Vayne -- DRK,
+        -- great sword, slow TP -- 141 times; Vayne came 33 times)
+        if ok_tp and not m.me and m.tp < 1000 and GSC_CLOSE_AT and gsc_cfg('tp_project') ~= false then
+            local proj = gsc_tp_by(m.name, m.tp, GSC_CLOSE_AT - gsc_num('ws_lead'))
+            if proj and proj < 1000 then
+                ok_tp = false
+                local r = GSC_TPR[m.name]
+                gsc_dbg('tpproj' .. m.name, string.format('GSC: %s at %d TP (+%.0f TP/s) won\'t reach 1000 before the window closes -- not waiting for them.',
+                    m.name, m.tp, r and r.rate or 0))
+            end
+        end
+        if ok_tp then
             local best
             for _, ws in ipairs(m.pool) do
                 local r, l, term = gsc_result(props, ws)
@@ -5947,6 +5986,7 @@ function gsc_tick()
     local now = os.clock()
     if GSC.mob ~= t.id then GSC.mob, GSC.mob_since = t.id, now end
     GSC_MOB = t.name   -- v4.92: learned damage for this mob type
+    if gsc_tp_track then pcall(gsc_tp_track) end   -- v5.04: TP gain rates
     local mem = gsc_members()
     local me
     for _, m in ipairs(mem) do if m.me then me = m end end
@@ -5969,7 +6009,9 @@ function gsc_tick()
         local live = #(c.props or {}) > 0 and (c.step or 1) < gsc_num('max_steps')
                      and now < close_t - gsc_num('ws_lead')
         if live then
+            GSC_CLOSE_AT = close_t   -- v5.04: for the teammates' TP projection
             local cands = gsc_continuers(mem, c.props, c.actor)
+            GSC_CLOSE_AT = nil
             for k, cd in ipairs(cands) do
                 if cd.m.me then
                     local go_at = open_t + (k - 1) * gsc_num('handoff_wait')
@@ -11877,6 +11919,25 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.04 - Group skillchain: don't wait for a teammate who can't make it (Mark,
+        2026-11-22, Vayne back as DRK: "see how the damage is doing ... If
+        changes are needed, please build and publish").
+        * A teammate keeps a continuer place from 500 TP (block_tp) because
+          their TP is seen late. With Vayne on a great sword (slow TP), Shadow
+          held for "Vayne continues Upheaval with Spinning Slash / Power Slash"
+          141 times in 95 min; Vayne made the WS 33 times, someone else went
+          after a median 5s 101 times, nobody 7 times.
+        * AA now tracks each player's TP gain per second from the party list.
+          A teammate under 1000 TP keeps their place only when that rate gets
+          them to 1000 before the chain window closes (minus ws_lead). No rate
+          yet (just joined) -> the old rule. group_skillchain.tp_project =
+          false turns it off. Debug line: "GSC: <name> at <tp> TP (+N TP/s)
+          won't reach 1000 before the window closes -- not waiting for them."
+        * Fix: a group_skillchain or party setting set to false was read as
+          "not set" and got its default (true) -- e.g. nuke_hold = false,
+          burst = false, stack_after_kill = false, stack_on_oor = false,
+          auto_accept = false had no effect. No current config file sets any
+          of these to false, so nothing changes until one does.
 v5.03 - Engage timing fix (Mark, 2026-11-21: "fix for joining-timing, yes";
         no change to stacking -- full stack, equidistant from mobs coming from
         any direction).

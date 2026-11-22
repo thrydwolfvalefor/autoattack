@@ -299,6 +299,7 @@ local group_skillchain = {enabled = true,
 	nuke_hold      = true,   -- v5.00: fillers hold weakness nukes for the burst
 	tp_band        = 500,    -- v5.00
 	band_min       = 5,      -- v5.00
+	tp_project     = true,   -- v5.04: only wait for a teammate who will reach 1000 TP before the window closes
 	once_per_mob   = {['Great Axe'] = 'Full Break'},
 	filler_jobs    = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
 	fillers        = {},
