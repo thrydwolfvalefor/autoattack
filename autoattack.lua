@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.02'
+_addon.version  = '5.03'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -4172,7 +4172,7 @@ function engage_lag_flush()
         if (debug_level or 0) >= 2 then
             local bits = {}
             if lag and E.how and E.how[n] then bits[#bits + 1] = E.how[n] end
-            if E.snap and E.snap[n] and (not lag or lag > PSTAT_SLOW) then bits[#bits + 1] = 'at 3s: ' .. E.snap[n] end
+            if E.snap and E.snap[n] and (not lag or lag > PSTAT_SLOW) then bits[#bits + 1] = 'then: ' .. E.snap[n] end
             if #bits > 0 then _x = ' [' .. table.concat(bits, '; ') .. ']' end
         end
         if lag then
@@ -4244,6 +4244,7 @@ function engage_lag_tick()
         engage_lag_flush()
         E = {mob = t.id, idx = t.index, name = t.name, t0 = now, got = {}, seen = {}, done = false,
              how = {}, snap = {}, rounds = {},   -- v5.01 (debug 2)
+             first = {},                         -- v5.03: first action per member
              away = t.distance and math.sqrt(t.distance) or 0}   -- v4.99: how far the mob was when picked
         ENGAGE_LAG = E
     end
@@ -4253,24 +4254,27 @@ function engage_lag_tick()
         E.seen[m.name] = true
         if not E.got[m.name] then
             -- v5.00: engaged on it, or first action on it (melee / WS / spell), whichever comes first
-            local _a = PARTY_ACT and m.mob.id and PARTY_ACT[m.mob.id]
-            if _a and _a.mob == E.mob and _a.t >= E.t0 then
-                E.got[m.name] = _a.t - E.t0
-                if E.how then E.how[m.name] = ENGAGE_HOW[_a.cat] or 'action' end
+            -- v5.03: the member's FIRST action on the mob, recorded as it happened
+            -- (v5.00-5.02 read the latest action whenever the main loop got here,
+            -- so a late look reported 18-20s for members who had been swinging)
+            local _f = E.first and E.first[m.name]
+            if _f then
+                E.got[m.name] = math.max(0, _f.t - E.t0)
+                if E.how then E.how[m.name] = ENGAGE_HOW[_f.cat] or 'action' end
             elseif m.mob.status == 1 and m.mob.target_index == E.idx then
                 E.got[m.name] = now - E.t0
                 if E.how then E.how[m.name] = 'engaged' end
             else
                 waiting = waiting + 1
                 -- v5.01 (debug 2): where a member still not on it was, 3s in
-                if E.snap and not E.snap[m.name] and now - E.t0 >= 3 and (debug_level or 0) >= 2 then
+                if E.snap and not E.snap[m.name] and now - E.t0 >= 3 and now - E.t0 < 6 and (debug_level or 0) >= 2 then   -- v5.03: only a real 3-6s look
                     local st = (m.mob.status == 1) and 'engaged' or ((m.mob.status == 0) and 'idle' or ('status ' .. tostring(m.mob.status)))
                     local on = ''
                     if m.mob.status == 1 then
                         on = ((m.mob.target_index or 0) == E.idx and ' on it') or (((m.mob.target_index or 0) > 0) and ' on another mob') or ''
                     end
                     local d = (m.mob.x and t.x) and math.sqrt((m.mob.x - t.x) ^ 2 + (m.mob.y - t.y) ^ 2) or nil
-                    E.snap[m.name] = st .. on .. (d and string.format(', %.1fy from it', d) or '')
+                    E.snap[m.name] = st .. on .. (d and string.format(', %.1fy from it', d) or '') .. string.format(' (%.0fs in)', now - E.t0)
                 end
             end
         end
@@ -4289,12 +4293,14 @@ function party_act_note(act)
     if not t1 or not t1.id or t1.id == act.actor_id or not PARTY_ACT_CATS[act.category] then return end
     local m = windower.ffxi.get_mob_by_id(t1.id)
     if m and m.spawn_type == 16 then PARTY_ACT[act.actor_id] = {mob = t1.id, t = os.clock(), cat = act.category} end
-    -- v5.01 (debug 2): melee rounds per player on the leader's mob
     local E = ENGAGE_LAG
-    if act.category == 1 and E and E.mob == t1.id and E.rounds and (debug_level or 0) >= 2 then
+    if E and E.mob == t1.id then
         local who = windower.ffxi.get_mob_by_id(act.actor_id)
         local n = who and who.name
-        if n then E.rounds[n] = (E.rounds[n] or 0) + 1 end
+        -- v5.03: first action on the leader's mob, timed when it happens
+        if n and E.first and not E.first[n] then E.first[n] = {t = os.clock(), cat = act.category} end
+        -- v5.01 (debug 2): melee rounds per player on the leader's mob
+        if n and act.category == 1 and E.rounds and (debug_level or 0) >= 2 then E.rounds[n] = (E.rounds[n] or 0) + 1 end
     end
 end
 ENGAGE_HOW = {[1] = 'swing', [3] = 'WS', [4] = 'spell', [6] = 'JA', [8] = 'casting'}
@@ -11871,6 +11877,18 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.03 - Engage timing fix (Mark, 2026-11-21: "fix for joining-timing, yes";
+        no change to stacking -- full stack, equidistant from mobs coming from
+        any direction).
+        * The leader's ENGAGE-LAG / ENGAGE summary now times each member from
+          the leader picking the mob to that member's FIRST action on it
+          (melee round, WS, spell, JA, casting), recorded the moment the
+          action arrives. v5.00-5.02 used the member's latest action at
+          whatever moment the main loop checked, so a late check showed
+          18-20s for members who had been swinging for most of that time
+          (v5.02 log: "19s" bats where Myth landed 12-17 melee rounds).
+        * The "where were they" snapshot (debug 2) is only taken 3-6s in and
+          says how many seconds in it was taken.
 v5.02 - Stack after every kill; members follow the leader's target; Level
         Sync notice (Mark, 2026-11-21: "when in 'aa fight', do a stack after
         every kill, because players are sometimes getting separated").

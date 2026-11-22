@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.02** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.03** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -570,6 +570,7 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
   * The leader's hot-switch hold also ends (after 1s) once every party player in range is on the mob.
   * Filler jobs (RDM, BLM ...) magic burst while the group skillchain is active (`burst = true`), and hold weakness nukes while a skillchain step is live so they land as bursts (`nuke_hold = true`). A skillchain bursts every element it carries (Light: fire, thunder, wind, light; Fusion: fire, light ...), with a 7s window.
   * Damage learning compares a low sample only with samples at similar TP (`tp_band`, `band_min`).
+* **v5.03:** the leader's engage timing (`ENGAGE-LAG`, `ENGAGE` summary) counts each member's first action on the mob, recorded when it happens.
 * **v5.02:** `aa fight` members stack on the leader after every kill (`stack_after_kill`, when more than `stack_kill_min` 0.5y away and within `stack_kill_max` 30y) and when their melee is out of range (`stack_on_oor`). Members follow the leader's target the moment it changes. A Level Sync that wears off is announced.
 * **v5.01 (debug level 2):** `ENGAGE-LAG` lines say how each member got on the mob and, when slow, where they were 3s in; a `MELEE-ROUNDS` line per mob counts each player's melee rounds on it; members' `PARTY-STATS` split "out of range" into melee / WS with the median distance.
 * `//aa gsc` marks players whose profile it has with `(profile)`. `//aa gsc k` lists what is learned for the party, `//aa gsc sync` compares now, `//aa gsc save` writes the learning file, `//aa gsc report` / `//aa report` prints the party report, `//aa gsc ?` (or `/p aa gsc ?`) re-sends profiles.
