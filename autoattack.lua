@@ -148,7 +148,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.26'
+_addon.version  = '5.28'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -5595,6 +5595,7 @@ GSC_DEF = {
     window_open = 3.2, window_close = 10.0, window_step = 0, window_min = 8.0, ws_lead = 1.2,
     handoff_wait = 1.5, opener_wait = 2.0, max_steps = 8, plan_depth = 3, filler_wait_tp = 600,
     bank_hpp = 10, noshow_max = 3, block_tp = 500, pre_wait = 6.0, tp_cap = 2900,
+    min_sc = 5.0,   -- v5.28: skip a level-1 skillchain worth less than this (k) unless at tp_cap
     burst = true, nuke_hold = true, tp_band = 500, band_min = 5,   -- v5.00
     tp_project = true,   -- v5.04
     once_per_mob = {['Great Axe'] = 'Full Break'},
@@ -5613,7 +5614,7 @@ GSC_DEF = {
         ['Great Sword']  = {'Resolution', 'Torcleaver', 'Ground Strike'},
         ['Scythe']       = {'Cross Reaper', 'Entropy', 'Insurgency'},
         ['Polearm']      = {'Stardiver', 'Impulse Drive', 'Drakesbane', "Camlann's Torment"},
-        ['Dagger']       = {"Rudra's Storm", 'Evisceration', 'Exenterator'},
+        ['Dagger']       = {"Rudra's Storm", 'Evisceration', 'Shark Bite', 'Exenterator'},   -- v5.28: Shark Bite
         ['Katana']       = {'Blade: Shun', 'Blade: Hi', 'Blade: Ku'},
         ['Hand-to-Hand'] = {'Victory Smite', 'Shijin Spiral', 'Asuran Fists', 'Howling Fist'},
         ['Club']         = {'Black Halo', 'Realmrazer', 'Judgment'},
@@ -5652,16 +5653,30 @@ function gsc_power(ws, who)
     return v or gsc_k_est('ws', who, ws) or GSC_POWER[ws] or 6   -- v4.90: learned damage (v4.98: blended for this mob type)
 end
 -- v4.72: Light skillchain damage when this WS closes it
-function gsc_scpower(ws, who)
+function gsc_scpower(ws, who, l, term)
     local p = gsc_cfg('sc_power')
     local v = type(p) == 'table' and tonumber(p[ws]) or nil
+    -- v5.28: learned per skillchain level first (Evisceration: Transfixion 13.1k
+    -- but Darkness 20.6k -- one Light-equivalent per closer said 10.8k / 43k)
+    if not v and l and gsc_k_est then v = gsc_k_est('sc', who, gsc_lkey(ws, l, term)) end
     return v or gsc_k_est('sc', who, ws) or GSC_SCPOWER[ws] or 18   -- v4.90: learned (v4.98: blended for this mob type)
 end
 -- v4.72: damage of a WS that makes skillchain r (level l, term = chain ends)
+-- v5.28: knowledge key for a closer at one skillchain level ('E' = Light on Light)
+function gsc_lkey(ws, l, term) return tostring(ws) .. '#' .. (term and 'E' or tostring(l or 0)) end
+-- v5.28: a level-1 skillchain too small to spend a WS on (11-23: Myth's Shoha /
+-- Kasha closing Compression after Evisceration's Transfixion -- 668 times, 2.3k
+-- each, 35% of his WS). Kept when the player is at the TP cap.
+function gsc_weak(ws, who, l, term, tp)
+    if term or (l or 0) ~= 1 then return false end
+    local min = gsc_num('min_sc')
+    if min <= 0 or (tp or 0) >= gsc_num('tp_cap') then return false end
+    return gsc_scpower(ws, who, l, term) * (GSC_MULT[1] or 0.25) < min
+end
 function gsc_value(ws, l, term, who)
     -- v4.90: who = the player (their learned damage); each skillchain also
     -- gives the fillers a magic burst (GSC_MBV, from gsc_members)
-    return gsc_power(ws, who) + gsc_scpower(ws, who) * (term and GSC_MULT['end'] or (GSC_MULT[l] or 0))
+    return gsc_power(ws, who) + gsc_scpower(ws, who, l, term) * (term and GSC_MULT['end'] or (GSC_MULT[l] or 0))
         + (((l or 0) > 0) and (GSC_MBV or 0) or 0)
 end
 -- best skillchain this WS makes on a resonance (list of properties): name, level,
@@ -5857,6 +5872,7 @@ function gsc_follow(props, depth, prev_id, mem, step)
         if m.engaged and m.id ~= prev_id and m.tp >= (step > 1 and gsc_num('block_tp') or soon) then
             for _, ws in ipairs(m.pool) do
                 local r, l, term = gsc_result(props, ws)
+                if r and gsc_weak(ws, m.name, l, term, m.tp) then r = nil end   -- v5.28
                 if r then
                     local v = gsc_value(ws, l, term, m.name) - (m.filler and 2 or 0)
                         + (term and 0 or 0.8 * gsc_follow({r}, depth - 1, m.id, mem, step + 1))
@@ -5898,6 +5914,11 @@ function gsc_continuers(mem, props, last_actor)
             local best
             for _, ws in ipairs(m.pool) do
                 local r, l, term = gsc_result(props, ws)
+                if r and gsc_weak(ws, m.name, l, term, m.tp) then   -- v5.28
+                    gsc_dbg('weak' .. m.name, string.format('GSC: %s skips %s (%s, ~%.1fk) -- saving TP for a bigger skillchain.',
+                        m.name, ws, tostring(r), gsc_scpower(ws, m.name, l, term) * (GSC_MULT[1] or 0.25)))
+                    r = nil
+                end
                 if r then
                     -- same value as the opener plan (damage of this WS and its skillchain,
                     -- plus what can still follow), plus a little for being ready now
@@ -6711,7 +6732,8 @@ function gsc_k_totals()
     local tot = {}
     for _, kind in ipairs(GSC_KINDS_SYNC) do   -- v4.92: per-mob kinds aren't synced
         for who, tw in pairs(GSC_K[kind] or {}) do
-            for _, e in pairs(tw) do tot[who] = (tot[who] or 0) + e.n end
+            -- v5.28: per-level keys ("WS#1") are local copies of the same samples
+            for k, e in pairs(tw) do if not tostring(k):find('#', 1, true) then tot[who] = (tot[who] or 0) + e.n end end
         end
     end
     return tot
@@ -6748,6 +6770,12 @@ function gsc_learn_sc(act, name, a1, sc, ends)
     local mult = ends and GSC_MULT['end'] or GSC_MULT[GSC_LEVEL[sc] or 0]
     if mult and mult > 0 then
         gsc_k_ensure()
+        -- v5.28: also per skillchain level, before the all-level odd check (which
+        -- threw out Shoha's real 2.3k Compressions against its Light average)
+        local lk = gsc_lkey(name, GSC_LEVEL[sc] or 0, ends)
+        if not gsc_k_odd('sc', who, lk, dmg / 1000 / mult, gsc_tp_at and gsc_tp_at(who)) then
+            gsc_k_add('sc', who, lk, dmg / 1000 / mult)
+        end
         if gsc_k_odd('sc', who, name, dmg / 1000 / mult, gsc_tp_at and gsc_tp_at(who)) then return end   -- v4.98 (v5.00: TP band)
         gsc_k_add('sc', who, name, dmg / 1000 / mult)
         local mn = gsc_mob_of(act)   -- v4.92
@@ -11922,6 +11950,36 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.28 - Group skillchain for Shadow THF + Myth SAM (Mark, 2026-11-23: "I
+        already have Shark Bite. Is there an issue where it was not detected?
+        Any changes needed to AA to work better for Shadow THF myth SAM?").
+        Review 02:36-09:44 (bats; 322 kills, ~52/hr): Myth's Shoha / Kasha
+        closed Compression 668 times for 2.3k (35% of his WS) in a Transfixion /
+        Compression loop with Evisceration; Darkness / Light average 20.5k.
+        * Shark Bite was never used: group_skillchain.pools['Dagger'] didn't list
+          it (GSC only uses pool WS the character knows). Added (built-in,
+          aa_config.lua, aa_config_defaults.lua).
+        * Skillchain damage learned per level for each closer (key "WS#1",
+          "#2", "#3", "#E" = Light on Light), used before the one all-level
+          figure. Evisceration's single figure (43k Light-equivalent, from 13k
+          Transfixions / 0.25) priced its Darkness at 43k; real 20.6k.
+        * New group_skillchain.min_sc (default 5.0k): a level-1 skillchain
+          predicted under it is skipped -- the player saves TP for Fudo
+          (Darkness) / Kasha (Light) on the next opener. Not at tp_cap.
+          Debug: "GSC: <name> skips <WS> (Compression, ~2.5k) -- saving TP".
+        * Per-level figures are learned on each PC (not sent in sync lines).
+        All four AAs need v5.28 (each AA picks its own player's WS).
+v5.27 - Level Sync off didn't work (Mark, 2026-11-23 09:03: "sync didn't work").
+        09:01 log: v5.26 sent "Level Sync off" with the leader's own name; the
+        game never answered (no "will be deactivated in 30 seconds") and AA gave
+        up after 45s. The party menu sends it with the designee's name.
+        aa_party.lua:
+        * The designee is read from the party list packet (0x0DD Flags bit
+          0x100, LevelSyncFlg) and kept in P.sync_who (also after a reload).
+        * "Off" goes out with the designee's name; if unknown, each player's
+          name in turn (then our own), 3s apart, until the game's 30s notice.
+        * If the game ignores every try, AA says so and points to the party menu.
+        * aa unsync uses the same and replies with the result.
 v5.26 - aa sync when a Level Sync is already on (Mark, 2026-11-23: "aa sync
         shadow" kept failing). Myth's sync from 02:32 was still on, so the game
         answered "Level Sync could not be activated ... a status which prevents

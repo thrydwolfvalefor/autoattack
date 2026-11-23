@@ -295,6 +295,7 @@ local group_skillchain = {enabled = true,
 	mb_weight      = 0.5,
 	pre_wait       = 6.0,    -- v4.87: s others hold their opener for a teammate's once-per-mob WS (Full Break)
 	tp_cap         = 2900,   -- v4.96: a player at this TP or more opens first (TP past 3000 is lost)
+	min_sc         = 5.0,    -- v5.28: skip a level-1 skillchain worth less than this (k), unless at tp_cap
 	burst          = true,   -- v5.00: fillers magic burst while GSC is active
 	nuke_hold      = true,   -- v5.00: fillers hold weakness nukes for the burst
 	tp_band        = 500,    -- v5.00
@@ -316,7 +317,7 @@ local group_skillchain = {enabled = true,
 		['Great Sword']  = {'Resolution', 'Torcleaver', 'Ground Strike'},
 		['Scythe']       = {'Cross Reaper', 'Entropy', 'Insurgency'},
 		['Polearm']      = {'Stardiver', 'Impulse Drive', 'Drakesbane', "Camlann's Torment"},
-		['Dagger']       = {"Rudra's Storm", 'Evisceration', 'Exenterator'},
+		['Dagger']       = {"Rudra's Storm", 'Evisceration', 'Shark Bite', 'Exenterator'},   -- v5.28: Shark Bite
 		['Katana']       = {'Blade: Shun', 'Blade: Hi', 'Blade: Ku'},
 		['Hand-to-Hand'] = {'Victory Smite', 'Shijin Spiral', 'Asuran Fists', 'Howling Fist'},
 		['Club']         = {'Black Halo', 'Realmrazer', 'Judgment'},

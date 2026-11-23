@@ -613,6 +613,56 @@ windower.register_event('incoming text', function(original)
     end
 end)
 
+-- v5.27: retail ignores "Level Sync off" (0x077 ChangeKind 7) sent with the
+-- leader's own name (11-23 09:01: no "will be deactivated" notice, 45s timeout).
+-- The party menu sends it with the designee's name. The designee is flagged in
+-- the party list packet 0x0DD: Flags (0x14, u16) bit 0x100 = LevelSyncFlg.
+windower.register_event('incoming chunk', function(id, data)
+    if id ~= 0x0DD or not data or #data < 0x16 then return end
+    local pid = data:byte(5) + data:byte(6) * 256 + data:byte(7) * 65536 + data:byte(8) * 16777216
+    local flags = data:byte(0x15) + data:byte(0x16) * 256
+    local name
+    for _, m in ipairs(members()) do
+        if m.id == pid then name = m.name; break end
+    end
+    if not name then
+        local ok, p = pcall(packets.parse, 'incoming', data)
+        name = ok and p and p['Name'] or nil
+        if name == '' then name = nil end
+    end
+    if not name then return end
+    if math.floor(flags / 256) % 2 == 1 then   -- bit 0x100
+        if P.sync_who ~= name then dbg('Level Sync designee (0x0DD): ' .. name) end
+        P.sync_who = name
+    elseif P.sync_who and P.sync_who:lower() == name:lower() then
+        P.sync_who = nil
+    end
+end)
+
+-- send "Level Sync off" and watch for the game's 30s notice: designee's name
+-- first, then each player (designee unknown), then our own name
+local function sync_off_request(nap)
+    local tried, names = {}, {}
+    local function add(n) if n and n ~= '' and not tried[n:lower()] then tried[n:lower()] = true; names[#names + 1] = n end end
+    add(P.sync_who)
+    for _, m in ipairs(members()) do if not m.trust then add(m.name) end end
+    add(my_name())
+    for _, n in ipairs(names) do
+        P.sync_ending = nil
+        dbg('Level Sync off request with name ' .. n)
+        level_sync(n, false)
+        local t0 = os.clock()
+        while not P.sync_ending and os.clock() - t0 < 3 do
+            if not nap(0.5) then return nil end
+        end
+        if P.sync_ending then
+            dbg('Level Sync off accepted (name ' .. n .. ')')
+            return true
+        end
+    end
+    return false
+end
+
 -- wait until the old sync is gone: our buff drops, or 32s after the game's
 -- "will be deactivated in 30 seconds" (a member out of range never had the buff)
 local function wait_sync_off(nap)
@@ -646,7 +696,12 @@ local function set_level_sync(ctx, who, nap)
                 say('Level Sync already on' .. (was and (' (' .. was .. ')') or '') .. ' -- turning it off first.')
                 reply(ctx, 'Level Sync is already on' .. (was and (' ' .. was) or '') ..
                       ' -- turning it off, then syncing to ' .. who .. ' (about 30s).')
-                level_sync(my_name(), false)
+                local r = sync_off_request(nap)   -- v5.27
+                if r == nil then return out(false) end
+                if not r then
+                    return out(false, 'The game ignored "Level Sync off" (tried ' ..
+                               (was or 'every member') .. '). Remove it from the party menu, then aa sync ' .. who .. '.')
+                end
             end
             local off = wait_sync_off(nap)
             if off == nil then return out(false) end
@@ -672,13 +727,9 @@ local function set_level_sync(ctx, who, nap)
             -- refused: an old sync we could not see (not on us) may still be on --
             -- send "off" once and watch for the game's 30s notice
             say('Level Sync to ' .. who .. ' refused -- trying "sync off" first.')
-            P.sync_ending = nil
-            level_sync(my_name(), false)
-            local t1 = os.clock()
-            while not P.sync_ending and os.clock() - t1 < 4 do
-                if not nap(0.5) then return out(false) end
-            end
-            if not P.sync_ending and not sync_on() then break end
+            local r = sync_off_request(nap)   -- v5.27
+            if r == nil then return out(false) end
+            if not r then break end
             reply(ctx, 'An old Level Sync was still on -- ending it, then syncing to ' .. who .. ' (about 30s).')
         end
     end
@@ -2136,8 +2187,11 @@ handle_command = function(ctx, text)
         coroutine.schedule(function() set_level_sync(ctx, who) end, 0)   -- v5.26
     elseif c == 'unsync' then
         if not need_lead(ctx) then return end
-        level_sync(my_name(), false)
-        say('Level Sync off (the game ends it in 30s).')
+        coroutine.schedule(function()   -- v5.27: designee's name, see sync_off_request
+            local r = sync_off_request(function(t) coroutine.sleep(t); return true end)
+            if r then reply(ctx, 'Level Sync off -- the game ends it in 30s.')
+            else reply(ctx, 'The game ignored "Level Sync off" -- remove it from the party menu.') end
+        end, 0)
     elseif c == 'trusts' then cmd_trusts(ctx, w)
     elseif c == 'retr' then
         if has_players() and not need_lead(ctx) then return end
