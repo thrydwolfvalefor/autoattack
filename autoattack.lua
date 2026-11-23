@@ -34,6 +34,7 @@
         //aa disband | leave | leader <name> | sync <name> | unsync
         //aa trusts [group] | retr | retrust | rest | mount [name] | dismount | pass | lot
         //aa sneak | invis | sneak invis | warp (or 299)
+        //aa nav <zone or place> | nav <n> | nav p<n> | nav party <name> | nav cancel   (v5.06, nav.lua)
         //aa status | ping | party | reload [all] | update [all|force|check] | rollback [all]
 
         ("//aa" works directly; "//lua c autoattack <command>" also works.)
@@ -61,7 +62,9 @@
 -- Kept small and outside AA_MAIN on purpose: it has to work when the rest
 -- doesn't. Globals on purpose.
 -- ===========================================================================
-AA_UPDATE_FILES = {'autoattack.lua', 'aa_party.lua', 'aa_config_defaults.lua', 'README.md'}
+AA_UPDATE_FILES = {'autoattack.lua', 'aa_party.lua', 'aa_config_defaults.lua', 'README.md',
+                   'nav.lua', 'nav_maps.lua', 'nav_zones.lua', 'nav_npcs.lua',
+                   'nav_transports.lua'}   -- v5.06: aa nav files (v5.11: transports)
 -- newest set of files an "aa update" backed up (backups/<file>_v<ver>_pre-update_<stamp>)
 -- whose version isn't skip_ver; nil if none
 function aa_rollback_find(skip_ver)
@@ -145,7 +148,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.05'
+_addon.version  = '5.26'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -11919,6 +11922,295 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.26 - aa sync when a Level Sync is already on (Mark, 2026-11-23: "aa sync
+        shadow" kept failing). Myth's sync from 02:32 was still on, so the game
+        answered "Level Sync could not be activated ... a status which prevents
+        synchronization" while AA still said "Level Sync set to Shadowhammer".
+        aa_party.lua (aa sync and aa invite ... sync <n>):
+        * Same designee already synced -> "Level Sync is already on <n>."
+        * Another sync on -> AA sends Level Sync off, waits for it to end (the
+          game takes 30s), then syncs to the new designee.
+        * The game's own answer decides the reply: "set" only after "Level Sync
+          activated / master level restricted"; a refusal with no sync visible
+          tries "off" once, then reports a blocking status (Level Restriction).
+        * aa unsync notes the game takes 30s to end it.
+v5.25 - aa nav list: stronger row highlight (Mark, 2026-11-23: "I need a better
+        highlight for the rows.. the dingy yellow is hard to see"). The bar under
+        the mouse is now a strong blue (alpha 190) and the line's text turns
+        bright white with ">>" in front and "<<" at the end. Colour:
+        nav.gui.highlight = {alpha, red, green, blue}.
+v5.24 - aa nav: out of Mog Garden always to Eastern Adoulin (Mark, 2026-11-23:
+        "when you choose the option 'return from whence you came' to exit mog
+        garden, you will go back to whatever zone you came from ... it might be
+        best to always exit the mog garden (when aa nav does it) by going to
+        eastern adoulin, as there is a HP and Book and Waypoint close by").
+        * Mog Garden's way out is now the Green Thumb Moogle -> Eastern Adoulin
+          (the Mog Dinghy is no longer offered). The first time its menu shows:
+          pick Eastern Adoulin (not "return from whence you came"); AA remembers
+          that choice and answers it itself from then on.
+        * From the Green Thumb Moogle only Eastern / Western Adoulin are ever
+          learned -- "return from whence you came" changes with where you came
+          in, so it is never kept as a route.
+        * Destinations too far to plan in one go from there: "talk to Green Thumb
+          Moogle -> Eastern Adoulin, then on from there" -- the trip carries on
+          from Eastern Adoulin's Home Point / Survival Guide / Waypoint.
+v5.23 - aa nav: out of Mog Garden (Mark, 2026-11-23: "when in mog garden, it tells
+        me 'no known route' to king ranperre tomb. We can exit the mog garden via
+        the dinghy or via the Green Thumb Moogle, and then continue from there").
+        * A zone with no warp, no zone line and no known route out (Mog
+          Garden) offers its ways out: "talk to Green Thumb Moogle (here) -> out
+          of Mog Garden, then on from there [you pick]" and the Mog Dinghy. AA
+          walks you to it and talks to it; you pick where to go; AA learns that
+          choice (v5.22) and the trip carries on from wherever you land.
+        * After that the learned way out is a normal route: "talk to Green Thumb
+          Moogle -> Southern San d'Oria, then ...". Learned routes now also keep
+          where they put you, so the next warp is picked by walking distance.
+v5.22 - aa nav learns every route you use by hand (Mark, 2026-11-23: "lets learn
+        all the routes... from Mog House, from Mog Dinghy, and from Adoulin
+        west and east" -- after "why ... only the western adoulin garden, and
+        not the mog garden from Port Sandoria?").
+        * Any menu choice at any NPC or object that is followed by a zone change
+          within 30s is remembered as a route (data/nav_learned.lua: NPC, its
+          spot, the menu choice, and whether it was inside your Mog House) and
+          used from then on like the routes from the server data -- the Mog House
+          moogle into Mog Garden, the Mog Dinghy, the Adoulin NPCs, anything the
+          data misses. Home Points / Survival Guides / Waypoints etc. are left
+          out (nav already drives those).
+        * Mog House routes: from outside, the step is "go into your Mog House"
+          (nav lands you at that city's Mog House Home Point); once you are in,
+          AA carries on and talks to the moogle for you. Entering / leaving the
+          Mog House counts as a step even when the game doesn't zone.
+        * //aa nav routes lists what was learned; //aa nav forget <name> drops a
+          wrong one (a quest cutscene that moved you, say).
+v5.21 - aa nav list: [X] close (Mark, 2026-11-23: "yes, add X"). The title line
+        ends in "[X] close"; clicking the title line closes the list (it is
+        highlighted like the other lines). A new //aa nav search still just
+        replaces the list; //aa nav close works as before.
+v5.20 - aa nav list pages (Mark, 2026-11-23: "when there are more items that can
+        show in the default GUI, we need to make a way to see the others below
+        by scrolling, or by clicking next page"). More than nav.max_rows (14)
+        results: the list shows a page at a time with a bottom line
+        "<< prev  page 1 of 3 (9 found)  next >>". Mouse wheel over the list
+        (up = previous, down = next), click the left / right half of that line,
+        or //aa nav next | prev. Line numbers stay the same across pages, so
+        //aa nav 17 still picks result 17.
+v5.19 - aa nav: aa stop stops it; your own "/p aa nav" opens the list; row
+        highlight as a bar (Mark, 2026-11-23: "aa stop is not stopping the
+        navigation. Also, when doing 'aa nav garden' it should popup a GUI with
+        all the options, and then let you select. It didn't list mog garden at
+        all, but tried to take me straight to RuAun gardens" and "lets focus on
+        highlighting the background for the row").
+        * aa stop (typed, /p or /tell) now also stops aa nav: walking to a warp,
+          waiting for one, a warp in progress, a trip with more legs, looking for
+          an NPC ("nav stopped."). The "aa stop" nav sends itself to stop the
+          fight loop before travelling doesn't count.
+        * "/p aa nav garden": the one who typed it gets the list (Ru'Aun
+          Gardens, Ru'Lude Gardens, The Garden of Ru'Hmet, Mog Garden -- via
+          Western Adoulin and Dangueubert -- ...) and picks; the pick goes to
+          the party as "aa nav #<code>" so everyone goes to the same place.
+          The others go on a name by themselves only when it is clear (one
+          match or an exact name, "/p aa nav mog garden"); otherwise they wait
+          for the pick ("12 matches -- waiting for Shadowhammer to pick one").
+          Typed //aa nav is unchanged (list, pick for yourself; right-click =
+          party).
+        * The highlighted line now gets a coloured bar behind it (gold,
+          see-through; nav.gui.highlight = {alpha, red, green, blue}) plus the
+          ">" in front, instead of yellow text.
+v5.18 - aa nav: NPCs found by what they are (Mark, 2026-11-23: "Funtrox is a
+        Gobbie mystery box NPC, so I should be able to search mystery and find
+        the gobbie mystery box NPCs").
+        * nav_npcs.lua now has what each NPC is / does, for 2,863 of the 8,986
+          NPCs: the comment at the top of its script in the Topaz server
+          project ("Gobbie Mystery Box", "Tenshodo Merchant", "Chocobo
+          Renter", "Starts and Finishes Quest: ...").
+        * aa nav matches the name OR that text: "aa nav mystery" lists every
+          Gobbie Mystery Box NPC (Funtrox, Specilox, Mystrix ...), "aa nav
+          tenshodo" the Tenshodo merchants. The list shows it in brackets:
+          "Funtrox [Gobbie Mystery Box] (Windurst Woods)". NPCs seen in game
+          get the same text by name.
+v5.17 - aa nav list: the line under the mouse is highlighted (Mark, 2026-11-23:
+        "I can't really see what item I am selecting in the GUI that opens..
+        can we highlight the row that is hovered over?"). The line under the
+        mouse turns bright yellow with a ">" in front; moving off the list
+        clears it. Click as before.
+v5.16 - aa nav: walking the last bit keeps the goal (Mark, 2026-11-23: "I
+        selected curator moogle at chateau, and it got me into the chateau,
+        but then didn't continue to guide me or try to target the curator
+        moogle inside"). From Lower Jeuno it warped to N. San d'Oria #2, and
+        the next step was walking into the Chateau -- a "walk" step ended the
+        trip, so nothing was waiting when you walked in.
+        * A walking step keeps the trip going: AA tells you where the way into
+          the next zone is (distance, direction, X / Y, every 5s) and carries
+          on after the zone change -- in the Chateau it then guides you to the
+          Curator Moogle and puts the cursor on it.
+v5.15 - aa nav: more ways to target an NPC; progress on your own screen; 5s
+        updates (Mark, 2026-11-23: "still it is unable to target ghebi. Also,
+        when doing the command we should not do updates to the process to the
+        Party Chat ... Also ... once in the right zone, there should be updates
+        more often ... lets do 5s").
+        * Targeting tries, in turn: the target packet, /target "<full name>",
+          /target <first name>, turn + /targetnpc -- each logged at level 2
+          ("NAV: target Ghebi Damomohe (25y) by name: cursor on ...") so the
+          log shows which one the game takes. It keeps trying every 2s while
+          the NPC is within seek_range (no more giving up after 3 rounds), and
+          a cursor you put on it yourself counts too.
+        * "/p aa nav ...": every AA's progress (going / walking / arrived /
+          where the NPC is) is shown in that player's own chat window only --
+          nothing goes to party chat any more. A /tell is still answered by tell.
+        * Where the NPC is: every 5s (nav.seek_every) instead of 15s.
+v5.14 - aa nav: NPC targeting checked (Mark, 2026-11-23: "aa is telling me that
+        ghebi is targetted, but I am not seeing that"). v5.12 sent the
+        injected target packet (0x058) and said "targeted" without looking;
+        on NPCs that packet often doesn't move the cursor (the same miss
+        v4.30 found on mobs).
+        * Now: target packet, then turn toward the NPC + /targetnpc, taking
+          turns, up to 6 tries 0.6s apart, and only "targeted" once the cursor
+          really is on it. Otherwise "could not put the cursor on <name> -- it
+          is Ny <dir> of you (trying again)" -- 3 rounds, 8s apart.
+v5.13 - aa nav: warps that haven't loaded yet after zoning (Mark, 2026-11-22:
+        "when I ran into range of HP#2 it didn't interact and warp me to the
+        next zone"). After Faurie, the trip carried on 8s after zoning, but
+        the Home Points of Northern San d'Oria weren't loaded yet (AA saw the
+        zone's NPCs 12s in), so nav found no warp and told you to walk to
+        Southern San d'Oria instead; walking up to HP #2 then did nothing.
+        * Warps not loaded yet count from where the data says they stand
+          (Home Point / Waypoint spots from the warp data, Survival Guide /
+          Unity / Proto-Waypoint spots from the NPC data). AA walks toward the
+          spot (50y rule), picks the NPC up the moment it shows, and warps.
+        * The same for zone-moving NPCs not seen yet (Faurie ...): their spot
+          comes from the NPC data instead of "can't see".
+        * Standing on the spot before the NPC shows: AA waits there (arm_timeout).
+v5.12 - aa nav: trips with legs, finding NPCs (Mark, 2026-11-22: "I am getting
+        'no known way to ghebi damonohe' ... unable to get me out of the
+        Chateau ... doesn't know that chateau goes to North Sandy, and then to
+        HP which can take me over to the Lower Jeuno" and "if nav is run on an
+        NPC/Object ... look for it and then put the cursor on them ... If the
+        NPC is in the zone and too far away to target, advise them what the POS
+        is and which direction to walk").
+        * Two-leg routes: with no warp in your zone (Chateau), nav leaves by an
+          NPC (Faurie) or on foot into a zone next door, then uses a warp
+          there -- the one nearest to where you arrive. "talk to Faurie (here)
+          -> Northern San d'Oria, then Home Point -> Lower Jeuno #2". Warp NPC
+          spots the warp data lacks (Survival Guides, Unity, Proto-Waypoints)
+          come from the NPC data (nav_zones.lua "spots").
+        * A trip carries on by itself after each zone change (up to 3 legs,
+          8s after zoning): "carrying on to ...". aa nav cancel stops it.
+        * NPCs / objects: once you are in its zone (or already were), AA says
+          how far, which way (north-east ...) and its X / Y, every 15s, and
+          puts the cursor on it as soon as it is within nav.seek_range (40y):
+          "Ghebi Damomohe is targeted -- 30y north of you". Gives up after
+          nav.seek_timeout (600s) or when you leave the zone.
+        * Party lines for NPCs carry the name (#n<zone>:<x>:<y>:<name>), so
+          every AA finds it at the end.
+        * Search: nothing found for the name as typed -> every word's first 4
+          letters ("ghebi damonohe" finds Ghebi Damomohe).
+v5.11 - aa nav: NPCs that move you to another zone (Mark, 2026-11-22: "can
+        'nav' include movement NPCs that you use to get into / out of zones
+        such as those like Faurie who is in Chateau D'oraguille, who you need
+        to interact with to get out of the zone?" -- "yes please").
+        * New file nav_transports.lua: 120 zone-moving NPCs (exit NPCs, gates,
+          Postern, Runic Seals, Cermet Doors, Afdeen, Kaduru-Haiduru, Shihu-
+          Danhu ...) read from the Topaz server project's NPC scripts (the
+          event that ends in "send to zone X"): NPC, its spot, where it puts
+          you, its menu and choice. tools/nav/mine_transports.py rebuilds it.
+        * aa nav uses them: "talk to Faurie (here) -> Northern San d'Oria". AA
+          walks you to the NPC (the 50y rule), talks to it and answers its menu
+          itself. It also routes through them: Bastok -> Abdhaljs Isle =
+          Home Point -> Upper Jeuno #3, then talk to Afdeen. No "walk" line
+          where an NPC is the only way out (Chateau).
+        * 26 NPCs whose script only looks at the menu and the choice are
+          answered automatically, and only when the menu number matches the
+          script's. The rest (key items, quests, several places on one choice)
+          show their menu the first time ("[1st time: you pick]"): you pick,
+          AA remembers it in data/nav_learned.lua and answers it from then on.
+          Choices you make by hand at any of these NPCs are learned the same
+          way when a zone change follows within 30s.
+v5.10 - aa nav: warp inside your own zone toward the way on (Mark, 2026-11-22:
+        "I am using 'aa nav chat' and currently in North Sandoria HP#1, and its
+        not taking me to HP #2 which is right next to chateau").
+        * Going to a zone with no warp (Chateau d'Oraguille) from the zone
+          next to it, the Home Points / Waypoints of the zone you are in were
+          never looked at -- only "walk" was offered. Now they are: from N.
+          San d'Oria HP #1, aa nav chat = Home Point -> Northern San d'Oria
+          #2, then walk in (~16s against ~44s walking).
+        * With a known way into the next zone, the walk to it is counted from
+          the real distance (from you, or from where the warp lands) plus 5s,
+          instead of a flat 90s per zone; only zones after that are guessed.
+          Standing by the gate, walking still wins.
+v5.09 - aa nav walks you to a warp NPC that is close (Mark, 2026-11-22: "if
+        the player is within 50 yalms of the hp/book/waypoint, its okay to
+        walk them there so they are in range to use it").
+        * The chosen warp NPC is farther than device_range (6y) but within
+          nav.walk_range (50y): AA runs straight at it, stops 4y from it and
+          warps. Farther than that: as before, the list says how far, you walk
+          and AA warps once you are in reach.
+        * The walk stops (and leaves the rest to you) when it isn't 1y closer
+          after 5s (stuck on a wall), when you fight / rest / mount, on aa nav
+          cancel, on a new aa nav and on zoning; arm_timeout (120s) still caps it.
+        * Version numbers: every change gets its own version from here on
+          (Mark: "we need to update version numbers with each change") --
+          v5.07 and v5.08 below were first shipped inside v5.06.
+v5.08 - aa nav: the warp that lands closest to the way on (Mark, 2026-11-22:
+        "why would going to chateau take me to north sandoria #1 instead of
+        #2 that is right next to chateau").
+        * A zone without a warp
+          is reached through the zone next to it, and every Home Point there
+          counted the same, so #1 won by name. nav_zones.lua now also knows
+          where each zone's way into the next zone is (from the zone-line
+          data: where you arrive coming the other way; the Chateau gate added
+          by hand), and the warp that lands closest to it wins -- Chateau ->
+          Northern San d'Oria #2, then walk in.
+v5.07 - aa nav: zones with no route listed, NPC search (Mark, 2026-11-22,
+        first try from Dynamis - Tavnazia: "not finding a match for 'curator
+        moogle' nor 'chateau d'oraguille'").
+        * A zone that matches is always listed, also with no route
+          from where you are ("no warp or walking route known from here").
+          Chateau d'Oraguille <-> Northern San d'Oria and Heavens Tower <->
+          Windurst Walls added to the zone links. New NPCs section: about 9,000
+          NPCs with zone and spot (nav_npcs.lua, from the Topaz server project,
+          read only while searching) plus every NPC AA sees in game, kept with
+          its spot in data/nav_npcs_seen.lua (checked every minute) -- so newer
+          NPCs (Curator Moogle ...) show up once you have been near one. The
+          best warp for an NPC is the one that lands closest to it ("+Ny walk").
+v5.06 - aa nav: travel anywhere the fastest way (Mark, 2026-11-22: "aa nav tar
+        would search for all locations name %tar% and then popup a menu with
+        the fastest warp/book/adouline warp crown method to get there").
+        New files nav.lua (search, list, warps), nav_maps.lua (warp data from
+        SuperWarp by Akaden, BSD licence; SuperWarp itself isn't needed) and
+        nav_zones.lua (which zones connect).
+        * //aa nav <text>: every zone and place (Auction House, Mog House,
+          Adoulin districts ...) with <text> in its name, each with its
+          fastest way from where you stand, in a list on screen. Left-click a
+          line (or //aa nav <n>) to go; right-click (or //aa nav p<n>) sends
+          "/p aa nav ..." so every AA in the party goes there its own fastest
+          way. //aa nav party <text> and "/p aa nav <text>" do the same.
+        * Ways: Home Points, Survival Guides (gil first, tabs only when under
+          200 gil), Waypoints, Proto-Waypoints (always last), Unity, Escha /
+          Reisenjima, Abyssea, Runic Portals, Campaign, Voidwatch, Warp Ring,
+          Dim. Rings, Tavnazian Ring, Instant Warp, Warp / Teleport / Recall.
+          Fastest first (walk to the warp + menu + zoning + ~90s per zone still
+          to walk); cost doesn't count.
+        * A zone with no warp: the nearest zone that has one, plus how many
+          zones to walk. Warp too far away: the list shows how far; walk there
+          and AA warps once you are within 6y (aa nav cancel stops it).
+        * The warp itself: AA talks to the NPC and answers its menu with
+          packets (SuperWarp's packet steps), so the menu never shows. It
+          stops AA first, dismounts, and answers the sender: going / arrived /
+          why not.
+        * Rings go on the RIGHT ring like aa warp (aa_nav_ring in
+          aa_party.lua: equip ring2, gs disable ring2, warp_ring_delay, use,
+          old ring back after the zone).
+        * Unlocks: read from the first warp menu of each kind you open (by
+          hand or by nav) -- one Home Point gives every Home Point -- and kept
+          in data/nav_<name>.lua. Unknown = treated as unlocked; a locked warp
+          is cancelled cleanly. Where Warp Ring / Warp take you is learned
+          the first time (aa warp counts too). //aa nav unlocks shows it.
+        * aa update: nav files are listed as "nav=" in manifest.txt (v5.05 and
+          older skip those lines). If they're missing after an update, AA
+          downloads them once at load.
+        * Settings: nav = {...} in aa_config.lua (defaults in
+          aa_config_defaults.lua): list position, rows, run speed, zone /
+          hop seconds, use_tabs, hide_locked ...
 v5.05 - aa fight: no following; leader changes (Mark, 2026-11-22: "we dont
         want constant auto-follow on the leader, just an 'aa stack' once a
         fight. Shadow change leader to myth, then left the party, and all the
@@ -12696,6 +12988,38 @@ function aa_load_party()
 end
 AA_PARTY_MOD = aa_load_party()
 
+-- v5.06: aa nav (nav.lua + nav_maps.lua + nav_zones.lua). A problem here only
+-- turns aa nav off -- it never stops AutoAttack or rolls it back. Missing
+-- files (updated from v5.05 or older, which doesn't fetch them) are
+-- downloaded once from the release on GitHub, then nav loads.
+function aa_load_nav(fetched)
+    local f = windower.addon_path .. 'nav.lua'
+    if not windower.file_exists(f) or not windower.file_exists(windower.addon_path .. 'nav_maps.lua') then
+        if not fetched and aa_nav_fetch then
+            windower.add_to_chat(207, '[AA] aa nav files missing -- getting them from GitHub.')
+            coroutine.schedule(function()
+                local okf, got = pcall(aa_nav_fetch)
+                if okf and got then AA_NAV_MOD = aa_load_nav(true) end
+            end, 5)
+        else
+            windower.add_to_chat(167, '[AA] aa nav is off: nav.lua / nav_maps.lua not found.')
+        end
+        return nil
+    end
+    local chunk, err = loadfile(f)
+    if not chunk then
+        windower.add_to_chat(167, '[AA] nav.lua not loaded (aa nav off): ' .. tostring(err))
+        return nil
+    end
+    local ok, mod = pcall(chunk)
+    if not ok then
+        windower.add_to_chat(167, '[AA] nav.lua error (aa nav off): ' .. tostring(mod))
+        return nil
+    end
+    return mod
+end
+AA_NAV_MOD = aa_load_nav()
+
 -- Call this when commands are received (e.g. "//aa assist" or "//aa pull")
 -- v4.69: a named global so aa_party.lua can run ws / move / ds directly and
 -- send the sender what it printed (registered as the addon command below).
@@ -12888,7 +13212,7 @@ function aa_addon_command(command, ...)
             windower.add_to_chat(8, '[AutoAttack] Unknown command: ' .. tostring(command))
         end
         windower.add_to_chat(8, '[AutoAttack] v' .. _addon.version .. ' -- //aa assist | pull [n|s|e|w|...] | stop | move [off|pull|provoke|melee|target|n] | debug [0|1|2] | target [packet|native] | rings [reset] | ds [clear] | ws [off|on] | gsc [on|off|auto|?|k|sync|report] | report | fullparty [on|off|fix] | dumpinv | id | pet')
-        windower.add_to_chat(8, '[AutoAttack] party: //aa invite me|<name> [sync <n>] [leader <n>] [fight] | fight | stop | stack | follow [n] | unfollow | cancel | disband | leave | leader <n> | sync <n> | unsync | trusts [grp] | retr | retrust | rest | mount [n] | dismount | pass | lot | sneak | invis | warp | status | ping | party')
+        windower.add_to_chat(8, '[AutoAttack] party: //aa invite me|<name> [sync <n>] [leader <n>] [fight] | fight | stop | stack | follow [n] | unfollow | cancel | disband | leave | leader <n> | sync <n> | unsync | trusts [grp] | retr | retrust | rest | mount [n] | dismount | pass | lot | sneak | invis | warp | nav <name> | status | ping | party')
     end
 end
 windower.register_event('addon command', aa_addon_command)   -- v4.69

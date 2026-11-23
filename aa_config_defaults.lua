@@ -1934,6 +1934,30 @@ local party = {enabled = true,
 }
 
 -- ===========================================================================
+-- v5.06: AA NAV -- //aa nav <zone or place> (nav.lua). The fastest warp there
+-- from where you stand, in a clickable list; "/p aa nav <name>" = everyone.
+-- Leave a value out to use its default.
+-- ===========================================================================
+local nav = {enabled = true,
+	max_rows      = 14,     -- lines in the list
+	device_range  = 6,      -- yalms: close enough to talk to a warp NPC
+	arm_timeout   = 120,    -- s AA waits for you to walk to a far warp before giving up
+	walk_range    = 50,     -- v5.09: a warp NPC within this many yalms (but out of reach) -- AA walks you to it
+	seek_range    = 40,     -- v5.12: an NPC / object you look for gets the cursor once it is this close
+	seek_timeout  = 600,    -- v5.12: s AA keeps telling you the way to it
+	seek_every    = 5,      -- v5.15: s between "it is Ny <dir> of you" updates
+	run_speed     = 5,      -- yalms/s when your speed can't be read
+	zone_seconds  = 10,     -- s of zoning counted per warp to another zone
+	hop_seconds   = 90,     -- s counted for walking through one zone
+	max_hops      = 3,      -- zones away AA looks for a warp when the zone itself has none
+	use_tabs      = false,  -- Survival Guides: false = gil first (tabs only under 200 gil), true = tabs first
+	hide_locked   = false,  -- true = warps this character hasn't unlocked aren't listed
+	proto_last    = true,   -- Proto-Waypoints always at the bottom of the list
+	gui           = {x = 420, y = 240, font = 'Consolas', size = 10,   -- where the list shows (//aa nav pos x y tries one)
+	                 highlight = {alpha = 190, red = 30, green = 110, blue = 235}},   -- v5.25: bar behind the line under the mouse (strong blue)
+}
+
+-- ===========================================================================
 -- v4.62: DEV SETTINGS -- override the debug values at the top of
 -- autoattack.lua. Kept here so "aa update" never resets them. Leave a value
 -- out (or the table empty) to use autoattack.lua's value.
@@ -1960,5 +1984,6 @@ return {
     job_config               = job_config,
     dread_spikes             = dread_spikes,
     party                    = party,
+    nav                      = nav,
     dev                      = dev,
 }

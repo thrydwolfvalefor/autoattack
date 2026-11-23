@@ -1,7 +1,12 @@
 # AutoAttack release manifest -- read by "aa update"
-version=5.05
-file=autoattack.lua 697660
-file=aa_party.lua 114788
-file=aa_config_defaults.lua 109914
-file=README.md 78239
-extra=aa_knowledge.lua 8759
+version=5.26
+file=autoattack.lua 720186
+file=aa_party.lua 124317
+file=aa_config_defaults.lua 111730
+file=README.md 84219
+extra=aa_knowledge.lua 11975
+nav=nav.lua 98496
+nav=nav_maps.lua 182221
+nav=nav_zones.lua 22214
+nav=nav_npcs.lua 348822
+nav=nav_transports.lua 11875

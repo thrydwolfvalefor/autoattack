@@ -17,7 +17,9 @@
     v4.70: aa gsc [on|off|auto] -- group skillchain switch, answers the sender,
     v4.90: aa gsc ? -- every AA re-sends its profile; aa~g lines are hidden,
     v4.75: stacking watch -- aa fight members re-stack on the leader mid-fight
-    (within restack_max), the leader keeps its aa fight spot)
+    (within restack_max), the leader keeps its aa fight spot),
+    v5.06: aa nav <zone or place> -- fastest warp there (nav.lua); /p aa nav = every AA
+    in the party, each its own fastest way; aa_nav_ring = rings on ring2 like aa warp)
 
     Loaded by autoattack.lua. Lets your friends (party.friends in
     aa_config.lua) control this character's AutoAttack with /tell or party
@@ -38,6 +40,7 @@
       trusts [group] | retr | retrust | rest | mount [name] | dismount | pass | lot
       status | ping | help | version | reload [all] | update [all|force|check] | rollback [all]
       pull [dir] | assist | ws on|off | move <mode> | ds [clear] | gsc [on|off|auto]   (answer the sender)
+      nav <zone or place> | nav cancel   (v5.06: each AA warps there its own fastest way)
       //aa party   (typed only) -- friends, settings and what the party code is doing
 
     See README.md "Party commands" for the details.
@@ -280,6 +283,8 @@ local function party_command(text)
         handle_command({src = 'party', sender = me_name, self = true}, text)
     end, 0.5)
 end
+
+function aa_party_run(text) party_command(text) end   -- v5.06: nav.lua's party lines
 
 -- ---------------------------------------------------------------------------
 -- running a sequence (one at a time; aa cancel stops it)
@@ -581,6 +586,106 @@ local function level_sync(name, on)
     return ok
 end
 
+-- v5.26: a new Level Sync while one is already on fails ("Level Sync could not
+-- be activated. One or more party members are currently under the effect of a
+-- status which prevents synchronization." -- 11-23 08:25, Myth's 02:32 sync
+-- was still on; AA said "set" anyway). Now: same designee -> say so; another
+-- designee -> turn the old sync off (the game takes 30s), wait, then sync.
+-- The game's answer (activated / could not) decides what AA reports.
+LEVEL_SYNC_BUFF = 269
+local function sync_on()
+    local p = me()
+    for _, b in ipairs(p and p.buffs or {}) do if b == LEVEL_SYNC_BUFF then return true end end
+    return false
+end
+windower.register_event('incoming text', function(original)
+    if not original then return end
+    if original:find('Level Sync activated', 1, true)
+       or original:find('master level has been restricted', 1, true)
+       or original:find('level has been restricted', 1, true) then
+        P.sync_result, P.sync_ending = 'ok', nil
+    elseif original:find('Level Sync could not be activated', 1, true) then
+        P.sync_result = 'fail'
+    elseif original:find('Level Sync will be deactivated', 1, true) then
+        P.sync_ending = os.clock()
+    elseif original:find('Level Sync effect wears off', 1, true) then
+        P.sync_ending, P.sync_who = nil, nil
+    end
+end)
+
+-- wait until the old sync is gone: our buff drops, or 32s after the game's
+-- "will be deactivated in 30 seconds" (a member out of range never had the buff)
+local function wait_sync_off(nap)
+    local t0 = os.clock()
+    while true do
+        if os.clock() - t0 > 45 then return false end
+        local ending = P.sync_ending
+        if not sync_on() and (not ending or os.clock() - ending > 32) then
+            if ending or os.clock() - t0 > 3 then return true end
+        end
+        if not nap(1) then return nil end
+    end
+end
+
+-- nap(s) sleeps and returns false if the caller was cancelled
+local function set_level_sync(ctx, who, nap)
+    nap = nap or function(s) coroutine.sleep(s); return true end
+    if P.sync_busy and os.clock() - P.sync_busy < 60 then
+        reply(ctx, 'Level Sync change already in progress -- wait for it.')
+        return false
+    end
+    P.sync_busy = os.clock()
+    local function out(ok, text) P.sync_busy = nil; if text then reply(ctx, text) end; return ok end
+    local was = P.sync_who
+    if sync_on() and was and was:lower() == who:lower() then
+        return out(true, 'Level Sync is already on ' .. who .. '.')
+    end
+    for attempt = 1, 2 do
+        if sync_on() or P.sync_ending then
+            if not P.sync_ending then
+                say('Level Sync already on' .. (was and (' (' .. was .. ')') or '') .. ' -- turning it off first.')
+                reply(ctx, 'Level Sync is already on' .. (was and (' ' .. was) or '') ..
+                      ' -- turning it off, then syncing to ' .. who .. ' (about 30s).')
+                level_sync(my_name(), false)
+            end
+            local off = wait_sync_off(nap)
+            if off == nil then return out(false) end
+            if not off then return out(false, 'Old Level Sync did not end within 45s -- not syncing to ' .. who .. '.') end
+            if not nap(1) then return out(false) end
+        end
+        if not member(who) then return out(false, who .. ' is not in the party -- no Level Sync.') end
+        P.sync_result = nil
+        level_sync(who, true)
+        local t0 = os.clock()
+        while not P.sync_result and os.clock() - t0 < 6 do
+            if not nap(0.5) then return out(false) end
+        end
+        if P.sync_result == 'ok' or (P.sync_result == nil and sync_on()) then
+            P.sync_who = who
+            say('Level Sync set to ' .. who .. '.')
+            return out(true, 'Level Sync set to ' .. who .. '.')
+        end
+        if P.sync_result ~= 'fail' then
+            return out(false, 'No answer from the game on Level Sync to ' .. who .. '.')
+        end
+        if attempt == 1 then
+            -- refused: an old sync we could not see (not on us) may still be on --
+            -- send "off" once and watch for the game's 30s notice
+            say('Level Sync to ' .. who .. ' refused -- trying "sync off" first.')
+            P.sync_ending = nil
+            level_sync(my_name(), false)
+            local t1 = os.clock()
+            while not P.sync_ending and os.clock() - t1 < 4 do
+                if not nap(0.5) then return out(false) end
+            end
+            if not P.sync_ending and not sync_on() then break end
+            reply(ctx, 'An old Level Sync was still on -- ending it, then syncing to ' .. who .. ' (about 30s).')
+        end
+    end
+    return out(false, 'Level Sync to ' .. who .. ' could not be activated: a party member has a status ' ..
+               'that blocks it (e.g. Level Restriction from capped content).')
+end
+
 -- ---------------------------------------------------------------------------
 -- aa fight: the leader pulls, members assist the leader's pulls
 -- ---------------------------------------------------------------------------
@@ -680,6 +785,7 @@ end
 
 -- aa stop (remote): finish the current fight, then stop
 local function do_stop(ctx)
+    if aa_nav_stop then pcall(aa_nav_stop) end   -- v5.19: /p or /tell aa stop stops aa nav too
     if aa_clear_anchor then aa_clear_anchor('aa stop') end   -- v4.75
     if P.follow_fight then P.follow = nil; run_stop() end
     P.follow_fight = false
@@ -780,8 +886,8 @@ local function run_invite(g, ctx, inv, sync, lead, fight)
     if sync then
         P.step = 'Level Sync to ' .. sync
         if member(sync) then
-            level_sync(sync, true)
-            say('Level Sync set to ' .. sync .. '.')
+            set_level_sync(ctx, sync, function(t) return sleep(g, t) end)   -- v5.26
+            if not alive(g) then return end
             if not sleep(g, 2) then return end
         else
             reply(ctx, sync .. ' is not in the party -- no Level Sync.')
@@ -869,6 +975,7 @@ local HELP = {
     'aa rest | mount [name] | dismount | pass | lot | pull [dir] | assist | ws on|off',
     'aa sneak | invis | sneak invis  (spell, else Spectral Jig, else Silent Oil / Prism Powder)',
     'aa warp | aa 299  (party: a Warp II mage warps everyone, else each uses its Warp Ring)',
+    'aa nav <zone or place>  (v5.06: each AA warps there its own fastest way) | aa nav cancel',
     'aa reload  (/t: that character, /p: everyone) | aa reload all  (whole party)',
     'aa update [me|force]  (whole party, any zone; "me" = only you -- newest AutoAttack from GitHub, then reload)',
     'aa update previous | aa update 4.88 | aa update list  (go back to an older version on GitHub; [me] = only you)',
@@ -1363,6 +1470,35 @@ local function warp_ring(ctx, wg, zone0)
     end
 end
 
+-- v5.06: aa nav uses a warp ring (Warp Ring, Dim. Rings, Tavnazian Ring) the
+-- aa warp way: on the RIGHT ring (ring2), gs disable ring2, warp_ring_delay,
+-- /item; the old ring goes back after the zone (aa_warp_restore). note(text)
+-- is told when the ring does not go off. Returns false, why when it can't start.
+function aa_nav_ring(ring, note)
+    if P.warp_ring_on or P.warping then return false, 'a warp ring is already being used.' end
+    if not have_item_any(ring) then return false, 'no ' .. ring .. '.' end
+    P.warp_gen = P.warp_gen + 1
+    local wg, zone0 = P.warp_gen, zone_id()
+    P.warp_old_ring = right_ring_name()
+    send('input /equip ring2 "' .. ring .. '"')
+    send('gs disable ring2')
+    P.warp_ring_on = true
+    say(string.format('NAV: %s on the right ring (was %s) -- using it in %ds.', ring, tostring(P.warp_old_ring or 'empty'), opt('warp_ring_delay')))
+    coroutine.schedule(function()
+        local t_end = os.clock() + opt('warp_ring_delay')
+        while os.clock() < t_end do
+            coroutine.sleep(0.5)
+            if P.warp_gen ~= wg then return end
+        end
+        send('input /item "' .. ring .. '" <me>')
+        if not wait_zoned(zone0, wg, 20) then
+            aa_warp_restore(false)
+            if note then note(ring .. ' did not go off (still on its reuse timer?).') end
+        end
+    end, 0)
+    return true
+end
+
 local function warp_self_spell(wg, zone0)
     for _, sp in ipairs({'Warp', 'Warp II'}) do
         if spell_usable(sp) and wait_spell(sp, wg, 60) then
@@ -1415,6 +1551,7 @@ local function cmd_warp(ctx)
     P.warping = true
     P.warp_mages = {}
     P.warp_gen = P.warp_gen + 1
+    AA_NAV_EXPECT_HOME = os.clock()   -- v5.06: aa nav learns where Warp takes you
     local wg, zone0 = P.warp_gen, zone_id()
     P.follow, P.follow_fight, P.stack = nil, false, nil
     run_stop()
@@ -1673,7 +1810,9 @@ end
 local UPDATE_URL   = 'https://raw.githubusercontent.com/thrydwolfvalefor/autoattack/main/'
 local UPDATE_FILES = {['autoattack.lua'] = true, ['aa_party.lua'] = true,
                       ['aa_config_defaults.lua'] = true, ['README.md'] = true,
-                      ['aa_knowledge.lua'] = true}   -- v4.90
+                      ['aa_knowledge.lua'] = true,   -- v4.90
+                      ['nav.lua'] = true, ['nav_maps.lua'] = true, ['nav_zones.lua'] = true,   -- v5.06
+                      ['nav_npcs.lua'] = true, ['nav_transports.lua'] = true}   -- v5.11
 local function ver_cmp(a, b)
     local pa, pb = {}, {}
     for n in tostring(a):gmatch('%d+') do pa[#pa + 1] = tonumber(n) end
@@ -1785,6 +1924,11 @@ local function do_update(ctx, force, ref)
         if not UPDATE_FILES[name] then return bad('manifest lists "' .. name .. '" -- refused.') end
         files[#files + 1] = {name = name, size = tonumber(size)}
     end
+    -- v5.06: "nav=" files (nav.lua, nav_maps.lua, nav_zones.lua) -- v5.05 and older skip these lines
+    for name, size in man:gmatch('nav%s*=%s*([%w_%.%-]+)%s+(%d+)') do
+        if not UPDATE_FILES[name] then return bad('manifest lists "' .. name .. '" -- refused.') end
+        files[#files + 1] = {name = name, size = tonumber(size)}
+    end
     if not ver or #files == 0 then return bad('manifest.txt has no version / files.') end
     local have = tostring(_addon.version)
     local c = ver_cmp(ver, have)
@@ -1846,6 +1990,33 @@ local function do_update(ctx, force, ref)
     say('UPDATE: v' .. have .. ' -> v' .. ver .. ' installed, reloading.')
     reload_now(ctx, have)
 end
+-- v5.06: nav.lua / nav_maps.lua / nav_zones.lua missing (an update from v5.05
+-- or older only fetches "file=" lines): download the "nav=" files of the
+-- release on GitHub, check each (size, loads), write them. true when all are there.
+function aa_nav_fetch()
+    local base = update_base()
+    local man, e = http_get(base .. 'manifest.txt')
+    if not man then say('NAV: could not read GitHub (' .. tostring(e) .. ').'); return false end
+    local dir, n = windower.addon_path, 0
+    for name, size in man:gmatch('nav%s*=%s*([%w_%.%-]+)%s+(%d+)') do
+        if UPDATE_FILES[name] then
+            local body, e2 = http_get(base .. name)
+            if not body or #body ~= tonumber(size) then
+                say('NAV: ' .. name .. ' did not download (' .. tostring(e2 or (#body .. ' bytes')) .. ').')
+                return false
+            end
+            if not (loadstring or load)(body, '=' .. name) then say('NAV: ' .. name .. ' does not load.'); return false end
+            local fh = io.open(dir .. name, 'wb')
+            if not fh then say('NAV: could not write ' .. name .. '.'); return false end
+            fh:write(body); fh:close()
+            n = n + 1
+        end
+    end
+    if n == 0 then say('NAV: the release on GitHub has no nav files.'); return false end
+    say('NAV: downloaded ' .. n .. ' nav files.')
+    return true
+end
+
 -- v4.65: aa update check / aa version -- compare with GitHub, install nothing
 local function cmd_update_check(ctx)
     local me_n, have = my_name(), tostring(_addon.version)
@@ -1962,12 +2133,11 @@ handle_command = function(ctx, text)
         if not who then return reply(ctx, 'Use: aa sync <name>') end
         if not need_lead(ctx) then return end
         if not member(who) then return reply(ctx, who .. ' is not in the party.') end
-        level_sync(who, true)
-        say('Level Sync set to ' .. who .. '.')
+        coroutine.schedule(function() set_level_sync(ctx, who) end, 0)   -- v5.26
     elseif c == 'unsync' then
         if not need_lead(ctx) then return end
         level_sync(my_name(), false)
-        say('Level Sync off.')
+        say('Level Sync off (the game ends it in 30s).')
     elseif c == 'trusts' then cmd_trusts(ctx, w)
     elseif c == 'retr' then
         if has_players() and not need_lead(ctx) then return end
@@ -1983,6 +2153,18 @@ handle_command = function(ctx, text)
     elseif c == 'dismount' then send('input /dismount')
     elseif c == 'sneak' or c == 'invis' or c == 'invisible' then cmd_sneak(ctx, w)
     elseif c == 'warp' or c == '299' then cmd_warp(ctx)
+    elseif c == 'nav' then   -- v5.06: nav.lua
+        local words = {}
+        for i = 2, #raw do words[#words + 1] = raw[i] end
+        if aa_nav_command then
+            -- v5.15: nav progress from a party line goes to each player's own
+            -- chat window, not to party chat (a /tell still answers by tell)
+            aa_nav_command(ctx, words, function(t)
+                if ctx.src == 'party' then windower.add_to_chat(207, '[AA] ' .. t) else reply(ctx, t) end
+            end)
+        else
+            reply(ctx, my_name() .. ': aa nav is not loaded (nav.lua missing -- "aa update force").')
+        end
     elseif c == 'pass' then cmd_pool(ctx, false)
     elseif c == 'lot' then cmd_pool(ctx, true)
     elseif c == 'retrust' then cmd_retrust(ctx)
@@ -2019,7 +2201,8 @@ local LOCAL = {invite = true, fight = true, stack = true, follow = true, unfollo
                sync = true, unsync = true, trusts = true, retr = true, rest = true,
                mount = true, dismount = true, pass = true, status = true, ping = true,
                lot = true, retrust = true, sneak = true, invis = true, invisible = true,
-               warp = true, ['299'] = true, reload = true, rl = true, update = true, rollback = true, version = true}
+               warp = true, ['299'] = true, reload = true, rl = true, update = true, rollback = true, version = true,
+               nav = true}   -- v5.06
 
 function aa_party_command(command, args)
     -- v4.75: //aa assist / //aa pull typed (not started by aa fight): stay put
@@ -2030,6 +2213,7 @@ function aa_party_command(command, args)
     if command == 'stop' then
         -- typed //aa stop: stop right away (autoattack.lua does it); drop the fight-follow
         if P.follow_fight then P.follow, P.follow_fight = nil, false; run_stop() end
+        if aa_nav_stop then pcall(aa_nav_stop) end   -- v5.19: and any aa nav
         return false
     end
     if command == 'party' then

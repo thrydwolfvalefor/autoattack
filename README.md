@@ -15,6 +15,7 @@ Current version: **5.05** (see the changelog block at the bottom of `autoattack.
 3. [Quick start](#quick-start)
 4. [Commands](#commands)
 5. [Party commands](#party-commands) (v4.44)
+   - [Travel: aa nav](#travel-aa-nav) (v5.06)
 6. [Modes: ASSIST and PULL](#modes-assist-and-pull)
 7. [What the loop does each tick](#what-the-loop-does-each-tick)
 8. [Configuration](#configuration)
@@ -172,6 +173,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | `mount [name]` / `dismount` | Stops AutoAttack and mounts (`party.mount`, default Raptor) / dismounts. |
 | `sneak` / `invis` / `sneak invis` | Every character that doesn't already have the buff puts it up: its own Sneak / Invisible spell (main or sub job, MP and recast checked), else Spectral Jig (DNC main or sub, level 25+, gives both), else Silent Oil / Prism Powder. Sneak always goes first. Then it answers in the same channel it was asked in (`/p` or `/t`) with the time left, e.g. `[AA] Shadowhammer: Sneak 4:05, Invisible 4:50`, or what it couldn't do. Refused while fighting, mounted or resting (v4.51). |
 | `warp` (or `299`) | **In party chat:** everyone stops AutoAttack and following. If anyone in the party can cast Warp II (they say `[AA] <name>: I can Warp II.`), that mage casts Warp II on every other player in the zone, then warps itself; the others wait up to `warp_wait` (90s), then use their ring. With no Warp II mage, every character equips its Warp Ring on the **right ring** (ring2), waits `warp_ring_delay` (11s) and uses it; the ring that was there goes back on after the warp, or right away if the Warp Ring doesn't go off (v4.53). **By /tell or typed:** just that character (its own Warp spell, else the ring). Refused while fighting (v4.52). |
+| `nav <zone or place>` | Every AA that gets it goes there its own fastest way (warp NPC, ring or spell) and answers in party chat; `nav cancel` stops it. See [Travel: aa nav](#travel-aa-nav) (v5.06). |
 | `pass` | Passes every item in the treasure pool. |
 | `lot` | Lots on every item in the treasure pool (v4.45). |
 | `status` | Replies with job, AutoAttack mode, HP/MP/TP, leader, and what the party code is doing. |
@@ -192,6 +194,38 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 **Trusts with other players:** `max_trusts` counts Trusts only, and AutoAttack never fills the party past 6 (2 players = at most 4 Trusts).
 
 **No Trusts for 120s after a player joins** (game rule). From v4.46 AutoAttack counts `trust_wait` from the moment a player joins the party (its own invite or one you typed), doesn't call Trusts until then (`TRUSTS: a player joined the party -- no Trusts for Ns more.` in the log), and `aa fight` waits it out and calls Trusts before the first pull. A character that is handed the leader isn't held by the window.
+
+### Travel: aa nav
+
+`//aa nav <text>` lists every zone and place with `<text>` in its name (case doesn't matter) and the **fastest** way there from where you stand, in a box on screen (v5.06, `nav.lua`).
+
+| Command | Does |
+|---|---|
+| `//aa nav <text>` | the list: **Zones**, **Other matches** (places inside a zone: Auction House, Mog House, Entrance, Adoulin districts, Cavernous Maw ...), then **NPCs** (by name or by what they are -- v5.18: `aa nav mystery` finds the Gobbie Mystery Box NPCs -- with their zone; the warp that lands closest wins). One zone found: every way to it. A zone with no route from where you are is still listed. |
+| left-click a line, or `//aa nav <n>` | go there (the line under the mouse gets a strong blue bar and bright white `>> ... <<` text -- v5.25; colour: `nav.gui.highlight`) |
+| right-click a line, or `//aa nav p<n>` | the whole party: says `/p aa nav ...`, every AA goes there its own fastest way and answers in party chat |
+| `//aa nav party <text>` / `/p aa nav <text>` | the whole party (friends only, like every party command). v5.19: with `/p aa nav <text>` you get the list and your pick goes to everyone; the others only go by themselves when the name is clear (one match / exact name). `aa stop` stops nav too. |
+| `//aa nav next` / `prev` | another page of the list (v5.20; also the mouse wheel over the list or clicking `<< prev` / `next >>`) |
+| `//aa nav cancel` / `close` | stop a warp or a wait / close the list (v5.21: or click the title line, `[X] close`; a new search replaces the list) |
+| `//aa nav unlocks` | what AA knows about this character's unlocks and Home Point |
+| `//aa nav routes` / `forget <name>` | v5.22: routes learned by hand (any NPC menu choice followed by a zone change -- Mog House moogle, Mog Dinghy, Adoulin NPCs ...) / drop a wrong one |
+| `//aa nav pos <x> <y>` | move the list (`nav.gui.x` / `y` keeps it there) |
+
+**Ways it uses:** zone-moving NPCs (v5.11: Faurie out of the Chateau, gates, Postern, Runic Seals, Afdeen ...), Home Points, Survival Guides (gil first; tabs only under 200 gil, or `use_tabs = true`), Waypoints, Proto-Waypoints (always listed last), Unity Concord, Escha / Reisenjima portals and entrances, Abyssea, Runic Portals, Campaign Arbiters, Voidwatch, Warp Ring, Dim. Rings, Tavnazian Ring, Instant Warp, and your own Warp / Warp II / Teleport / Recall spells.
+
+**Order:** speed only, cost never counts -- walk to the warp NPC + menu + zoning, plus `hop_seconds` (90s) for every zone you still have to walk. A zone with no warp of its own shows the nearest zone that has one ("..., then walk 1 zone"); a zone next to you also shows plain walking.
+
+**Doing it:** AA stops its loop, dismounts, talks to the NPC and answers the menu with packets, so the menu never shows (the packet steps come from SuperWarp). If the NPC is more than 6 yalms away but within 50 (`walk_range`), AA walks you to it and warps (v5.09; it stops if it gets stuck, you fight, mount or `aa nav cancel`). Farther than that, the list shows how far; walk there and AA warps the moment you're in reach (gives up after 120s). Rings go on the **right ring** like `aa warp` and your ring goes back after the zone. It always answers the sender: going / arrived / why not.
+
+**Trips with legs (v5.12):** with no warp in your zone, nav leaves by an NPC (Faurie out of the Chateau) or on foot into the zone next door, then uses the warp there that is nearest to where you arrive, and carries on by itself after each zone change (up to 3 legs).
+
+**Finding an NPC or object (v5.12):** once you are in its zone, AA tells you how far it is, which way to walk and its X / Y (every 5s), and puts the cursor on it as soon as it is within 40 yalms (`seek_range`; v5.15 tries the target packet, `/target <name>` and `/targetnpc` in turn, and only says "targeted" when the cursor is on it). Progress from `/p aa nav` shows in each player's own chat window, never in party chat (v5.15). A typo later in a word is forgiven ("ghebi damonohe" finds Ghebi Damomohe).
+
+**Unlocks:** which warps a character has only shows up in the warp menu. The first menu of each kind you open -- by hand or by nav -- gives every unlock of that kind (one Home Point = all Home Points) and is kept in `data/nav_<name>.lua`. Until then a warp counts as unlocked; a locked one is cancelled cleanly and shown as `[LOCKED]` afterwards. Where Warp Ring / Warp take you is learned the first time you use them (`aa warp` counts too).
+
+**Files:** `nav.lua`, `nav_maps.lua` (warp data from [SuperWarp](https://github.com/AkadenTK/superwarp) by Akaden, BSD licence -- SuperWarp itself isn't needed), `nav_zones.lua` (which zones connect), `nav_npcs.lua` (about 9,000 NPCs with zone and spot, from the Topaz server project; read only while searching), `nav_transports.lua` (v5.11: 120 NPCs that move you to another zone, from the same project's NPC scripts; 26 are answered automatically, the rest show their menu the first time -- you pick, AA remembers it in `data/nav_learned.lua`). NPCs AA sees in game are added to `data/nav_npcs_seen.lua`, so newer NPCs show up once you've been near one. `aa update` brings all three; if they're missing after updating from v5.05 or older, AA downloads them once at load.
+
+**Settings** (`nav = {...}` in aa_config.lua): `enabled`, `max_rows` (14), `device_range` (6), `walk_range` (50), `seek_range` (40), `seek_timeout` (600s), `seek_every` (5s), `arm_timeout` (120s), `run_speed` (5), `zone_seconds` (10), `hop_seconds` (90), `max_hops` (3), `use_tabs` (false), `hide_locked` (false), `proto_last` (true), `gui` (`x`, `y`, `font`, `size`).
 
 ---
 
@@ -761,4 +795,4 @@ AutoAttack has three debug levels (v4.25), set with `debug_level` at the top of 
 
 ## Credits
 
-Written by Mark Williams. Depends on the Windower 4 project. The built-in targeting is based on Windower's SetTarget addon, and the built-in facing on the Facing addon (Zero Serenity, Rubenator, Nattack).
+Written by Mark Williams. Depends on the Windower 4 project. `aa nav`'s warp data and menu packet steps come from SuperWarp by Akaden (BSD licence, notice kept in `nav_maps.lua`). The built-in targeting is based on Windower's SetTarget addon, and the built-in facing on the Facing addon (Zero Serenity, Rubenator, Nattack).
