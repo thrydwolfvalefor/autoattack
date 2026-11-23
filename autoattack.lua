@@ -148,7 +148,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.28'
+_addon.version  = '5.29'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -11950,6 +11950,19 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.29 - Plain PULL roams; only aa fight has a fight spot (Mark, 2026-11-23:
+        "when in PULL mode and not 'aa fight' I don't want the script to be
+        moving me back to a starting point.. I want to float around and move
+        to different rooms / floors").
+        * v4.81 saved a fight spot (ANCHOR) on every //aa pull that had none,
+          so the puller ran back to where pull was typed between mobs and
+          mid-fight. Removed: //aa pull, "aa pull" by tell / party chat no
+          longer save one. aa fight still saves the leader's spot and returns
+          to it, as before.
+        * A //aa pull after aa fight still ends fight mode and clears the spot
+          (unchanged, aa_party.lua leave_fight_mode).
+        * STEP-BACK (v4.37: back to where you stood a moment before an
+          emergency step-in) is unchanged -- it's a few yalms, not a start spot.
 v5.28 - Group skillchain for Shadow THF + Myth SAM (Mark, 2026-11-23: "I
         already have Shark Bite. Is there an issue where it was not detected?
         Any changes needed to AA to work better for Shadow THF myth SAM?").
@@ -13108,10 +13121,11 @@ function aa_addon_command(command, ...)
         local _p = windower.ffxi.get_player()
         local _job = _p and (_p.main_job .. '/' .. (_p.sub_job or '?')) or '?'
         info_msg('PULL command received — starting PULL mode. Job: ' .. _job .. (subcmd and (', subcmd: ' .. subcmd) or ''))
-        -- v4.81: the puller always has a spot to come back to -- where //aa pull
-        -- was typed (aa fight sets its own first). Without it, a plain
-        -- //aa pull (or one after a reload) never walked back after a step-in.
-        if not AA_ANCHOR then aa_set_anchor() end
+        -- v5.29: no fight spot for a plain //aa pull (v4.81 saved one here, so
+        -- the puller kept running back to where pull was typed). Only aa fight
+        -- sets AA_ANCHOR (aa_party.lua, before it starts PULL); plain PULL
+        -- roams -- other rooms, other floors. STEP-BACK after an emergency
+        -- step-in is separate (step_home) and still works.
         toggle_auto_attack()
     elseif command == 'stop' then
         -- debug_msg('Stop command received')
