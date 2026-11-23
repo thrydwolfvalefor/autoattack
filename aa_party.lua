@@ -365,7 +365,7 @@ local function move_tick()
             return
         end
         name, range = P.stack.name, opt('stack_precision')
-    elseif P.follow then
+    elseif P.follow and not P.follow_fight then   -- v5.05: aa follow only; aa fight doesn't follow
         name, range = P.follow, opt('follow_range')
     else
         run_stop()
@@ -673,7 +673,7 @@ local function do_fight(ctx)
         end
     end
     P.follow, P.follow_fight = L, true
-    say('FIGHT: assisting ' .. L .. "'s pulls (following between fights).")
+    say('FIGHT: assisting ' .. L .. "'s pulls (stacking on " .. L .. ' after each kill, no following).')
     P.fight_at = os.clock()
     start_mode('assist')
 end
@@ -2161,6 +2161,48 @@ windower.register_event('zone change', function()
     if gsc_on_zone then pcall(gsc_on_zone) end   -- v4.90
 end)
 
+-- v5.05: LEADER CHANGES (Mark, 2026-11-22: "Shadow change leader to myth, then
+-- left the party, and all the players are still following shadow"). aa fight
+-- members stack on whoever leads now; the new leader stops stacking on anyone;
+-- with no leader / no party, fight mode ends. aa follow stops when the
+-- followed player leaves. Acts after the change holds LEADER_CHANGE_SECS (the
+-- party list reloads while zoning).
+LEADER_CHANGE_SECS = 2
+function leader_watch(L, now)
+    if now < (P.zone_quiet or 0) then P.lc_since = nil; return end
+    if P.follow_fight and P.follow then
+        local lead = has_players() and L or nil
+        local gone = not member(P.follow)
+        if lead == P.follow and not gone then P.lc_since = nil; return end
+        P.lc_since = P.lc_since or now
+        if now - P.lc_since < LEADER_CHANGE_SECS then return end
+        P.lc_since = nil
+        local old = P.follow
+        if lead and lead == my_name() then
+            P.follow, P.follow_fight, P.stack, P.lead_mob = nil, false, nil, nil
+            run_stop()
+            say('FIGHT: ' .. old .. ' is no longer leading -- you lead now. Not stacking on anyone; send "aa fight" to start pulling.')
+        elseif lead and member(lead) then
+            P.follow, P.stack, P.lead_mob = lead, nil, nil
+            run_stop()
+            say('FIGHT: party leader is now ' .. lead .. ' (was ' .. old .. ') -- assisting and stacking on ' .. lead .. '.')
+        else
+            P.follow, P.follow_fight, P.stack, P.lead_mob = nil, false, nil, nil
+            run_stop()
+            say('FIGHT: ' .. old .. (gone and ' left the party' or ' is no longer leading') .. ' -- fight mode off, staying here.')
+        end
+        return
+    end
+    if P.follow and not P.follow_fight and not member(P.follow) then
+        P.lc_since = P.lc_since or now
+        if now - P.lc_since < LEADER_CHANGE_SECS then return end
+        P.lc_since = nil
+        say('FOLLOW: ' .. P.follow .. ' left the party -- not following.')
+        P.follow, P.stack = nil, nil
+        run_stop()
+    end
+end
+
 -- v4.46: a player joining the party (any invite, typed or AA's) starts the
 -- 120s Trust window; becoming leader by a hand-off clears it.
 local function watch_party()
@@ -2199,6 +2241,7 @@ local function watch_party()
     local L = leader_name()
     local lm = L and member(L)
     P.leader_id = lm and lm.id or nil
+    pcall(leader_watch, L, now)   -- v5.05
 end
 
 -- ---------------------------------------------------------------------------

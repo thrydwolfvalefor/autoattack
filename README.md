@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.04** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.05** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -156,7 +156,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | Command | What it does |
 |---|---|
 | `invite me\|<name> [sync <name>] [leader <name>] [fight]` | Invites the sender (`me`) or a named friend. The sender and the invitee must be in your zone (any distance). If you're not the party leader you reply "send this to <leader>". If the invitee is in a Trust-only party, their AutoAttack drops it (unless they are fighting: then they tell the requester they can't). Then: finish the mobs fighting the party (no new pulls; mobs that aren't fighting you don't count), drop Trusts (`/retr all`), invite, Level Sync to `sync`, hand the leader to `leader`. A new leader calls Trusts right away and, with `fight` (or if you were fighting), starts the fight. If you stay leader: wait `trust_wait` (120s) from the Trust drop, call Trusts, then `/p aa fight` if you were fighting or `fight` was sent. In party chat only the leader acts on it. |
-| `fight` | The party leader (or a solo character) waits up to `stack_wait` (5s) for party members to stack on it, then pulls. A party member runs onto the leader's exact X/Y (within `stack_precision`, 0.3y, v4.47), then assists the leader's pulls and follows the leader between fights. `/p aa fight` starts everyone. |
+| `fight` | The party leader (or a solo character) waits up to `stack_wait` (5s) for party members to stack on it, then pulls. A party member runs onto the leader's exact X/Y (within `stack_precision`, 0.3y, v4.47), then assists the leader's pulls. Members don't follow the leader between fights (v5.05): they stack on it once after each kill. If the leader changes, members switch to the new leader; if the leader leaves the party, fight mode ends. `/p aa fight` starts everyone. |
 | `stop` | Finishes the current fight (no new pulls), then stops. (Typed `//aa stop` still stops at once.) |
 | `stack` | Every party member runs onto the **party leader's** exact X/Y and stops directly on top, within `stack_precision` (0.3y), whoever sends it (v4.48; a name after it is ignored). The leader stays put. |
 | `follow [name]` / `unfollow` | Follows the named friend (default: the party leader, or the sender) at `follow_range`, or stops following. Paused while you're engaged. |
@@ -570,6 +570,7 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
   * The leader's hot-switch hold also ends (after 1s) once every party player in range is on the mob.
   * Filler jobs (RDM, BLM ...) magic burst while the group skillchain is active (`burst = true`), and hold weakness nukes while a skillchain step is live so they land as bursts (`nuke_hold = true`). A skillchain bursts every element it carries (Light: fire, thunder, wind, light; Fusion: fire, light ...), with a 7s window.
   * Damage learning compares a low sample only with samples at similar TP (`tp_band`, `band_min`).
+* **v5.05:** `aa fight` members stack once after each kill instead of following the leader; they switch to a new party leader and stop when the leader leaves. `aa follow` stops when the followed player leaves.
 * **v5.04:** the group skillchain only waits for a teammate under 1000 TP when their TP gain (tracked per player) gets them to 1000 before the chain window closes (`tp_project`).
 * **v5.03:** the leader's engage timing (`ENGAGE-LAG`, `ENGAGE` summary) counts each member's first action on the mob, recorded when it happens.
 * **v5.02:** `aa fight` members stack on the leader after every kill (`stack_after_kill`, when more than `stack_kill_min` 0.5y away and within `stack_kill_max` 30y) and when their melee is out of range (`stack_on_oor`). Members follow the leader's target the moment it changes. A Level Sync that wears off is announced.

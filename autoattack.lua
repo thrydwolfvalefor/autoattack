@@ -145,7 +145,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.04'
+_addon.version  = '5.05'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -11919,6 +11919,19 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.05 - aa fight: no following; leader changes (Mark, 2026-11-22: "we dont
+        want constant auto-follow on the leader, just an 'aa stack' once a
+        fight. Shadow change leader to myth, then left the party, and all the
+        players are still following shadow").
+        * aa fight members no longer follow the leader between fights. They
+          stack on the leader when aa fight starts, once after each kill
+          (stack_after_kill), and when they drift mid-fight (stack_watch /
+          stack_on_oor, unchanged). aa follow still follows.
+        * Leader changed: members switch to the new leader (assist + stacking)
+          after it holds 2s. The new leader stops stacking on anyone and keeps
+          assisting ("aa fight" makes it pull). Leader left with no new leader
+          / party gone: fight mode ends, everyone stays where they are.
+        * aa follow stops when the followed player leaves the party.
 v5.04 - Group skillchain: don't wait for a teammate who can't make it (Mark,
         2026-11-22, Vayne back as DRK: "see how the damage is doing ... If
         changes are needed, please build and publish").
