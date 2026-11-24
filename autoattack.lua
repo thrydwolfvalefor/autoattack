@@ -150,7 +150,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.50'
+_addon.version  = '5.51'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -11993,6 +11993,9 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.51 - aa trade rems: no 255-a-chapter cap any more (Mark, 2026-11-23: "rems
+        tales traded over 255 are not lost") -- like Shami, Monisette refuses
+        what doesn't fit; the rest stays with you and is reported FULL.
 v5.50 - aa trade seals = aa trade crests: both trade every seal AND crest
         (Mark, 2026-11-23: "aa trade seals and aa trade crests (with trade
         both seals and crests)"); beastmen's + Kindred's seals and Kindred's /

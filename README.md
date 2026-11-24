@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.50** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.51** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -224,7 +224,7 @@ Trades everything of one kind from your **inventory, satchel, sack and case** to
 | `aa trade rate 2` / `3` / `auto` | Shemo's exchange rate (auto = what Shemo last said, else 3) |
 | `aa stop` | stops a trade between rounds |
 
-**Full:** Shami holds 9999 of each seal / crest kind and refuses the rest (nothing is lost), Monisette 255 of each chapter (AA never offers her more than 255 of a chapter in one run). A kind they won't take stays with you and AA tells you (`Shami is FULL on S. Kindred Crest (412 still with you)`). For seals and crests the list opens (same look as `aa nav`): every kind with what Shami holds, and the exchanges at **Shemo**, who swaps stored seals / crests **3 for 1**. The suggestion -- gold and highlighted -- is **3000** of the full kind for **1000** of the kind you have least of. During a seal / crest **campaign** Shemo takes **2 for 1** and the list says **2000 -> 1000**: AA reads the rate from Shemo's own words (the `(Maximum: N)` on his number line, "for N of yours", his "I'll be takin' N ..." offer), good for 3 days; `aa trade rate 2` sets it by hand.
+**Full:** Shami holds 9999 of each seal / crest kind and refuses the rest (nothing is lost), Monisette 255 of each chapter (she refuses the rest too, nothing is lost). A kind they won't take stays with you and AA tells you (`Shami is FULL on S. Kindred Crest (412 still with you)`). For seals and crests the list opens (same look as `aa nav`): every kind with what Shami holds, and the exchanges at **Shemo**, who swaps stored seals / crests **3 for 1**. The suggestion -- gold and highlighted -- is **3000** of the full kind for **1000** of the kind you have least of. During a seal / crest **campaign** Shemo takes **2 for 1** and the list says **2000 -> 1000**: AA reads the rate from Shemo's own words (the `(Maximum: N)` on his number line, "for N of yours", his "I'll be takin' N ..." offer), good for 3 days; `aa trade rate 2` sets it by hand.
 
 **Exchanging:** click a line and AA walks to Shemo, opens his menu and tells you what to pick (`trade -> S. Kindred Crest -> Beastmen's Seal -> enter 1000 -> yes`). Shemo's offer and balances are drawn by the game from his menu itself, so AA can't check them with the menu hidden -- you confirm, AA reads the result and updates the counts.
 
