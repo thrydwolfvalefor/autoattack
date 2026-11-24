@@ -1048,6 +1048,7 @@ local HELP = {
     'aa sneak | invis | sneak invis  (spell, else Spectral Jig, else Silent Oil / Prism Powder)',
     'aa warp | aa 299  (party: a Warp II mage warps everyone, else each uses its Warp Ring)',
     'aa nav <zone or place>  (v5.06: each AA warps there its own fastest way) | aa nav cancel',
+    'aa buy <item> [qty] | aa buy list [text] | aa buy scan  (v5.45: Curio Vendor / Green Thumb Moogle)',
     'aa reload  (/t: that character, /p: everyone) | aa reload all  (whole party)',
     'aa update [me|force]  (whole party, any zone; "me" = only you -- newest AutoAttack from GitHub, then reload)',
     'aa update previous | aa update 4.88 | aa update list  (go back to an older version on GitHub; [me] = only you)',
@@ -2240,6 +2241,16 @@ handle_command = function(ctx, text)
         else
             reply(ctx, my_name() .. ': aa nav is not loaded (nav.lua missing -- "aa update force").')
         end
+    elseif c == 'buy' then   -- v5.45: nav.lua (Curio Vendor / Green Thumb Moogles)
+        local words = {}
+        for i = 2, #raw do words[#words + 1] = raw[i] end
+        if aa_buy_command then
+            aa_buy_command(ctx, words, function(t)
+                if ctx.src == 'party' then windower.add_to_chat(207, '[AA] ' .. t) else reply(ctx, t) end
+            end)
+        else
+            reply(ctx, my_name() .. ': aa buy is not loaded (nav.lua missing -- "aa update force").')
+        end
     elseif c == 'pass' then cmd_pool(ctx, false)
     elseif c == 'lot' then cmd_pool(ctx, true)
     elseif c == 'retrust' then cmd_retrust(ctx)
@@ -2277,7 +2288,7 @@ local LOCAL = {invite = true, fight = true, stack = true, follow = true, unfollo
                mount = true, dismount = true, pass = true, status = true, ping = true,
                lot = true, retrust = true, sneak = true, invis = true, invisible = true,
                warp = true, ['299'] = true, reload = true, rl = true, update = true, rollback = true, version = true,
-               nav = true}   -- v5.06
+               nav = true, buy = true}   -- v5.06, v5.45
 
 function aa_party_command(command, args)
     -- v4.75: //aa assist / //aa pull typed (not started by aa fight): stay put
@@ -2602,6 +2613,15 @@ local function lead_mob_watch()
     if not lead_mob_ok(m) then P.lead_mob = nil; return end
     if p.status == 0 then fast_engage(P.lead_mob, "leader's mob", true)
     elseif p.status == 1 then corpse_switch(P.lead_mob, "leader's mob") end
+end
+
+-- v5.47: true when mob_id is the leader's mob this aa fight member is joining
+-- (seen within LEAD_MOB_KEEP s). autoattack.lua never blocks it (aa_block_mob /
+-- set_target): 11-23 a 20s target give-up on it kept Myth idle ~20s a bat.
+function aa_lead_mob_is(mob_id)
+    if not mob_id or not P.follow_fight or not P.lead_mob or P.lead_mob ~= mob_id then return false end
+    if os.clock() - (P.lead_mob_at or 0) > LEAD_MOB_KEEP then return false end
+    return (aa_running and aa_running() and aa_get_mode and aa_get_mode() == 'assist') and true or false
 end
 
 windower.register_event('action', function(act)

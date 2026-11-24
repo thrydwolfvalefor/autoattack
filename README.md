@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.44** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.47** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -173,6 +173,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | `mount [name]` / `dismount` | Stops AutoAttack and mounts (`party.mount`, default Raptor) / dismounts. |
 | `sneak` / `invis` / `sneak invis` | Every character that doesn't already have the buff puts it up: its own Sneak / Invisible spell (main or sub job, MP and recast checked), else Spectral Jig (DNC main or sub, level 25+, gives both), else Silent Oil / Prism Powder. Sneak always goes first. Then it answers in the same channel it was asked in (`/p` or `/t`) with the time left, e.g. `[AA] Shadowhammer: Sneak 4:05, Invisible 4:50`, or what it couldn't do. Refused while fighting, mounted or resting (v4.51). |
 | `warp` (or `299`) | **In party chat:** everyone stops AutoAttack and following. If anyone in the party can cast Warp II (they say `[AA] <name>: I can Warp II.`), that mage casts Warp II on every other player in the zone, then warps itself; the others wait up to `warp_wait` (90s), then use their ring. With no Warp II mage, every character equips its Warp Ring on the **right ring** (ring2), waits `warp_ring_delay` (11s) and uses it; the ring that was there goes back on after the warp, or right away if the Warp Ring doesn't go off (v4.53). **By /tell or typed:** just that character (its own Warp spell, else the ring). Refused while fighting (v4.52). |
+| `buy <item> [qty]` | Each AA buys it from the Curio Vendor / Green Thumb Moogle next to it (v5.45, see [Shopping: aa buy](#shopping-aa-buy-v545)). |
 | `nav <zone or place>` | Every AA that gets it goes there its own fastest way (warp NPC, ring or spell) and answers in party chat; `nav cancel` stops it. See [Travel: aa nav](#travel-aa-nav) (v5.06). |
 | `pass` | Passes every item in the treasure pool. |
 | `lot` | Lots on every item in the treasure pool (v4.45). |
@@ -194,6 +195,19 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 **Trusts with other players:** `max_trusts` counts Trusts only, and AutoAttack never fills the party past 6 (2 players = at most 4 Trusts).
 
 **No Trusts for 120s after a player joins** (game rule). From v4.46 AutoAttack counts `trust_wait` from the moment a player joins the party (its own invite or one you typed), doesn't call Trusts until then (`TRUSTS: a player joined the party -- no Trusts for Ns more.` in the log), and `aa fight` waits it out and calls Trusts before the first pull. A character that is handed the leader isn't held by the window.
+
+### Shopping: aa buy (v5.45)
+
+`aa buy <item or part of its name> [qty]` buys from the **Curio Vendor Moogle** (Port San d'Oria / Port Bastok / Port Windurst) or the **Green Thumb Moogle** (Mog Garden) without you hunting through their sub-menus: AA knows which menu each item is in, talks to the moogle, opens that menu with packets (nothing pops up), buys a stack at a time and closes it.
+
+| Command | Does |
+|---|---|
+| `aa buy scan` | at a Curio Vendor Moogle: AA opens each of its menus once and remembers what it sells to this character (Rhapsodies unlock different items) |
+| (open a menu by hand) | any menu you open at either moogle is remembered the same way -- the Green Thumb Moogle is learned only like this (its menu also takes you out of the garden) |
+| `aa buy list [text]` | what AA knows, with prices |
+| `aa buy <text> [qty]` | one item matches (or the exact name): buys it; several: lists them. Checks gil and free inventory slots first; walks to the moogle if it is within 50 yalms |
+
+Kept per character in `data/shops_<name>.lua`. Works typed, by tell and by party chat (each AA buys for itself).
 
 ### Travel: aa nav
 
@@ -224,6 +238,8 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 **Walk of Echoes (v5.32):** `aa nav walk of echoes` goes to Xarcabard [S] (Home Point there), then the Veridical Conflux next to it. Without Kupofried's medallion AA buys it there first (1000 gil; it says so if you're short), then goes in. The first time you pick in the conflux's menu yourself (buy, then enter); AA remembers both choices in `data/nav_learned.lua`. The Veridical Conflux inside Walk of Echoes takes you back to Xarcabard [S] (also learned the first time).
 
 **Mog Garden (v5.33):** the Mog Dinghy in Port San d'Oria / Port Bastok / Port Windurst, the Moogle in your Mog House (San d'Oria, Bastok, Windurst, Jeuno, Whitegate, Adoulin) and Dangueubert in Western Adoulin all lead there; the first time you pick Mog Garden in the menu and AA remembers it (a Mog House moogle's choice works in every town). Which way each character takes is `nav.via` in aa_config.lua -- e.g. `via = {['Mog Garden'] = {default = 'Eastern Adoulin / Cunegonde', Scracheebrat = "Southern San d'Oria"}}` (a zone, or `zone / NPC`). Since v5.37 only that way in is used, marked `[your way]`.
+
+**Leaving your Mog House (v5.46):** inside your Mog House every aa nav trip starts by going out the door to the area you entered from, then the Home Point / Survival Guide close by there (worked out once you're outside). The first time you walk out and pick "area you entered from" yourself; AA remembers that choice and where the door is, and after that walks you to the door and picks it for you.
 
 **Leaving Mog Garden (v5.35, v5.37):** from Mog Garden aa nav always leaves for Eastern Adoulin -- the Green Thumb Moogle or the Mog Dinghy's Eastern Adoulin choice (its bottom option; v5.38), whichever is closer (`nav.garden_exit`; set it to `''` to also allow the Mog Dinghy to the ports) and carries on from there. No warp ring, item or spell is used to leave it.
 
@@ -628,6 +644,9 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
   * The leader's hot-switch hold also ends (after 1s) once every party player in range is on the mob.
   * Filler jobs (RDM, BLM ...) magic burst while the group skillchain is active (`burst = true`), and hold weakness nukes while a skillchain step is live so they land as bursts (`nuke_hold = true`). A skillchain bursts every element it carries (Light: fire, thunder, wind, light; Fusion: fire, light ...), with a 7s window.
   * Damage learning compares a low sample only with samples at similar TP (`tp_band`, `band_min`).
+* **v5.47:**
+  * `aa fight` members never block the leader's mob after a targeting miss (it cost a member about 20s on every other mob in a tight pack); an existing block on it is lifted. Members' `PARTY-STATS` now include `target give-ups N (leader's mob M)`.
+  * The group skillchain's look-ahead only counts on a teammate under 1000 TP when their TP gain gets them there in time (same `tp_project` check as v5.04), so a closer isn't spent on a weaker skillchain betting on a WS that won't come (THF: Shark Bite's Fragmentation instead of Rudra's Storm's Darkness).
 * **v5.05:** `aa fight` members stack once after each kill instead of following the leader; they switch to a new party leader and stop when the leader leaves. `aa follow` stops when the followed player leaves.
 * **v5.04:** the group skillchain only waits for a teammate under 1000 TP when their TP gain (tracked per player) gets them to 1000 before the chain window closes (`tp_project`).
 * **v5.03:** the leader's engage timing (`ENGAGE-LAG`, `ENGAGE` summary) counts each member's first action on the mob, recorded when it happens.

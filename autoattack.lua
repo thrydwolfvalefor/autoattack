@@ -35,6 +35,7 @@
         //aa trusts [group] | retr | retrust | rest | mount [name] | dismount | pass | lot
         //aa sneak | invis | sneak invis | warp (or 299)
         //aa nav <zone or place> | nav <n> | nav p<n> | nav party <name> | nav cancel   (v5.06, nav.lua)
+        //aa buy <item> [qty] | buy list [text] | buy scan   (v5.45: Curio Vendor / Green Thumb Moogle)
         //aa status | ping | party | reload [all] | update [all|force|check] | rollback [all]
 
         ("//aa" works directly; "//lua c autoattack <command>" also works.)
@@ -148,7 +149,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.44'
+_addon.version  = '5.47'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -408,6 +409,18 @@ end
 -- Global so the main loop can call it without another upvalue.
 function aa_block_mob(mob_id, secs, why)
     if not mob_id then return end
+    -- v5.47: counted for PARTY-STATS; an aa fight member never blocks the leader's
+    -- mob (11-23: Myth stood idle ~20s -- TARGET_GIVEUP_SECS -- on every other bat)
+    if PSTAT then PSTAT.tgu = (PSTAT.tgu or 0) + 1 end
+    if aa_lead_mob_is and aa_lead_mob_is(mob_id) then
+        if PSTAT then PSTAT.tgl = (PSTAT.tgl or 0) + 1 end
+        if NATIVE_GIVEUP then NATIVE_GIVEUP[mob_id] = nil end
+        cant_target_ids[mob_id] = nil
+        local lm = windower.ffxi.get_mob_by_id(mob_id)
+        info_msg('TARGET-GIVEUP not done: ' .. tostring(lm and lm.name or '?') .. ' (' .. tostring(mob_id) ..
+                 ') is the leader\'s mob -- ' .. tostring(why) .. '; trying again.')
+        return
+    end
     cant_target_ids[mob_id] = os.clock() + (secs or 20)
     local m = windower.ffxi.get_mob_by_id(mob_id)
     info_msg('TARGET-GIVEUP ' .. tostring(m and m.name or '?') .. ' (' .. tostring(mob_id) .. '): ' ..
@@ -1344,8 +1357,15 @@ function set_target(mob_id, ignore_quiet)  -- v4.20: ignore_quiet = hot switch o
         return false
     end
     if is_cant_target_blocked(target.id) then
-        debug_msg('TARGET-SKIP ' .. _name .. ' (' .. target.id .. '): temporarily blacklisted.')
-        return false
+        -- v5.47: the leader's mob (aa fight member) is never left blocked
+        if aa_lead_mob_is and aa_lead_mob_is(target.id) then
+            cant_target_ids[target.id] = nil
+            if NATIVE_GIVEUP then NATIVE_GIVEUP[target.id] = nil end
+            debug_msg('TARGET-UNBLOCK ' .. _name .. ' (' .. target.id .. '): the leader\'s mob (aa fight) -- block lifted.')
+        else
+            debug_msg('TARGET-SKIP ' .. _name .. ' (' .. target.id .. '): temporarily blacklisted.')
+            return false
+        end
     end
     -- v5.00: target packets AND the /targetbnpc fallback already failed on this mob: move on
     if not ignore_quiet and NATIVE_GIVEUP[target.id] then
@@ -4400,6 +4420,7 @@ function pstat_reset()
     local old = PSTAT
     PSTAT = {land = 0, miss = 0, intr = 0, oor = 0, cant = 0, deaths = 0, errs = 0,
              oorm = 0, oorw = 0, oord = {},   -- v5.01
+             tgu = 0, tgl = 0,                -- v5.47: target give-ups / of them on the leader's mob
              lags = {}, never = 0, why = {}, S = old and old.S or nil, cast_at = old and old.cast_at or -100}
 end
 function rep_reset()
@@ -4531,10 +4552,11 @@ function pstat_line()
     for i, v in ipairs(PSTAT.oord or {}) do od[i] = v end
     table.sort(od)
     local omed = #od > 0 and math.floor(od[math.floor((#od + 1) / 2)] * 10 + 0.5) or 0
-    return string.format('aa~g s %s e%s/%d/%d r%s w%d/%d/%d o%d c%d d%d x%d n%d m%d/%d/%d', tostring(_addon and _addon.version or '?'),
+    -- v5.47: + " t<target give-ups>/<of them on the leader's mob>"
+    return string.format('aa~g s %s e%s/%d/%d r%s w%d/%d/%d o%d c%d d%d x%d n%d m%d/%d/%d t%d/%d', tostring(_addon and _addon.version or '?'),
         med and string.format('%.1f', med) or '-', #l, PSTAT.never, (#why > 0) and table.concat(why, ',') or '-',
         PSTAT.land, PSTAT.miss, PSTAT.intr, PSTAT.oor, PSTAT.cant, PSTAT.deaths, PSTAT.errs, pstat_news(),
-        PSTAT.oorm or 0, PSTAT.oorw or 0, omed)
+        PSTAT.oorm or 0, PSTAT.oorw or 0, omed, PSTAT.tgu or 0, PSTAT.tgl or 0)
 end
 function pstat_human(rest)
     local v, e, r, w, o, c, d, x, n = tostring(rest):match('^(%S+) e(%S+) r(%S+) w(%S+) o(%d+) c(%d+) d(%d+) x(%d+) n(%d+)')
@@ -4548,8 +4570,10 @@ function pstat_human(rest)
     local wl, wm, wi = w:match('^(%d+)/(%d+)/(%d+)')
     local out = string.format('v%s, engage %s (%s mobs, never %s)', v, (med == '-' or not med) and '-' or (med .. 's'), cnt or '?', nev or '?')
     if r ~= '-' then out = out .. ', slow: ' .. r:gsub('_', ' '):gsub(':', ' x'):gsub(',', ', ') end
+    local tg, tl = tostring(rest):match(' t(%d+)/(%d+)')   -- v5.47
     return out .. string.format(', WS %s landed / %s missed / %s interrupted, out of range %s, can\'t see %s, deaths %s, errors %s, %s learned not in the master yet',
-        tostring(wl), tostring(wm), tostring(wi), o, c, d, x, n)
+        tostring(wl), tostring(wm), tostring(wi), o, c, d, x, n) ..
+        (tg and string.format(', target give-ups %s (leader\'s mob %s)', tg, tl) or '')
 end
 function pstat_send(why, delay, reset)
     if not PSTAT then return end
@@ -5869,7 +5893,19 @@ function gsc_follow(props, depth, prev_id, mem, step)
         -- v4.77: a later step counts only players already at block_tp (500): with
         -- everyone counted, Shadow's Ukko closing Fusion scored a Fudo from Myth at
         -- 0 TP, and beat Scrach's Light + Shadow's Ukko Light-on-Light (36.8k)
-        if m.engaged and m.id ~= prev_id and m.tp >= (step > 1 and gsc_num('block_tp') or soon) then
+        local ok = m.engaged and m.id ~= prev_id and m.tp >= (step > 1 and gsc_num('block_tp') or soon)
+        -- v5.47: the look-ahead uses the same TP projection as gsc_continuers (11-23:
+        -- Shadow closed Gravitation with Shark Bite = Fragmentation (~5k) instead of
+        -- Rudra's Storm = Darkness (~20k), counting on a Light from Myth at 534 TP,
+        -- +37 TP/s, who couldn't reach 1000 in time). A step after this one has
+        -- until about a window after now to get there.
+        if ok and not m.me and m.tp < 1000 and gsc_cfg('tp_project') ~= false then
+            local at = os.clock() + gsc_num('window_close') - gsc_num('ws_lead') +
+                math.max(0, step - 2) * gsc_num('window_open')
+            local proj = gsc_tp_by(m.name, m.tp, at)
+            if proj and proj < 1000 then ok = false end
+        end
+        if ok then
             for _, ws in ipairs(m.pool) do
                 local r, l, term = gsc_result(props, ws)
                 if r and gsc_weak(ws, m.name, l, term, m.tp) then r = nil end   -- v5.28
@@ -11950,6 +11986,59 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.47 - Myth's 20s engage gaps; GSC look-ahead checks TP (Mark, 2026-11-23:
+        "now that I have Rudra's Storm on shadow, please see how myth and I are
+        working together" -> "yes please").
+        * aa fight members: the leader's mob is never blocked. 11-23 (Shadow
+          THF + Myth SAM, Locus Dire Bats): Myth took 18.6-22.7s to engage 10
+          of 16 bats, each time idle 1.6-4y from it -- the 20s
+          TARGET_GIVEUP_SECS block (target packets + /targetbnpc missed it in
+          the pack) also stopped fast assist. aa_block_mob() now skips the
+          leader's mob (aa_lead_mob_is() in aa_party.lua: the mob the leader is
+          on / acted on in the last LEAD_MOB_KEEP s) and set_target() lifts an
+          existing block on it ("TARGET-GIVEUP not done" / "TARGET-UNBLOCK").
+        * PARTY-STATS: members send their target give-ups (" t<all>/<leader's
+          mob>"); the leader's line reads "target give-ups N (leader's mob M)".
+          Older AAs ignore the token.
+        * GSC: gsc_follow() (what can follow a step) uses the same TP projection
+          as gsc_continuers (v5.04): a teammate under 1000 TP only counts when
+          their TP gain gets them there by about a window from now. 11-23: 5
+          Shark Bites closed Gravitation as Fragmentation (avg 7k) while
+          Rudra's Storm makes Darkness (avg 21.8k), betting on Myth's Light.
+v5.46 - aa nav from inside your Mog House: out the door first (Mark,
+        2026-11-23: "when in mog house or mog garden, and using 'aa nav', lets be
+        dynamic and assume we need to exit. For mog house, it will be the option
+        on the door for 'area you entered from' and then ... assume you can find
+        a HP/book nearby ... For mog garden, always exit to East Adoulin").
+        * nav.lua route(): in your Mog House (not Mog Garden) the only option is
+          "out of your Mog House (area you entered from), then a Home Point /
+          Survival Guide close by -> <place>"; outside, the carry-on (zone change
+          or the Mog House flag going off) works out the rest from where you
+          stand. Into the same zone with an NPC: AA looks for it.
+        * The door: a menu that opens in the Mog House from anything but the
+          Moogle is the door's; your choice there + leaving is learned
+          (nav_learned "mhdoor:<zone>" / "mhdoor": menu, option, where you
+          stood). Next time AA walks to that spot and answers the door menu.
+        * Mog Garden unchanged: always out to Eastern Adoulin (v5.37/v5.38).
+v5.45 - aa buy (Mark, 2026-11-23: "lets add an 'aa buy [item or partial item
+        name] [qty]' ... most handy for the curio vendor moogle, and green thumb
+        moogle, where there are many sub menus of items ... focus this 1st
+        version on just stuff that those moogles sell").
+        * nav.lua (with the menu code nav already has): every shop list
+          (0x03C) that arrives after you pick a menu at a Curio Vendor Moogle or
+          Green Thumb Moogle is remembered with the menu steps that opened it
+          (data/shops_<name>.lua: item -> slot, price, steps).
+        * aa buy scan: at a Curio Vendor Moogle, AA opens menus 1-12 one at a
+          time (the menu and the shop window are caught, never drawn) and
+          remembers what each holds. Not done at the Green Thumb Moogle (its menu
+          also leaves the garden) -- open its shop menus once by hand.
+        * aa buy <text> [qty]: picks the item (exact name, or the only match;
+          else lists them), checks gil and free slots, walks to the moogle within
+          50y, talks to it, opens the menu, buys (0x083, a stack at a time, each
+          confirmed by 0x03F), closes the menu, says what it bought. aa buy list
+          [text] shows what AA knows. Typed, tell or party (aa_party.lua: "buy").
+        * Not yet seen in game: the exact menu option numbers; if scan finds
+          nothing, opening each menu once by hand teaches AA the same thing.
 v5.44 - aa nav: Warp Ring before Instant Warp, Walk of Echoes by its conflux
         (Mark, 2026-11-23: "please favor Warp Ring before Instant Warp scroll.
         Also, in Walk of Echoes, favor Conflux instead of warp").
