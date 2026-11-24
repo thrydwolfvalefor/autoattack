@@ -1,5 +1,5 @@
 --[[
-    nav.lua -- AutoAttack travel: aa nav (v5.06; v5.07 NPCs + unreachable zones listed, v5.08 lands closest to the way on, v5.09 walks you to a close warp, v5.10 warps inside your own zone toward the way on, v5.11 zone-moving NPCs, v5.12 trips with legs + finding NPCs, v5.13 warps not loaded yet after zoning, v5.14 checked NPC targeting, v5.15 more ways to target + updates on your own screen, v5.16 walking legs keep the goal, v5.17 hovered line highlighted, v5.18 NPCs found by what they are, v5.19 aa stop stops nav + your own /p line opens the list, v5.20 list pages, v5.21 [X] close, v5.22 learns routes you use by hand + Mog House, v5.23 ways out of Mog Garden, v5.24 Mog Garden always out to Eastern Adoulin, v5.25 stronger row highlight)
+    nav.lua -- AutoAttack travel: aa nav (v5.06; v5.07 NPCs + unreachable zones listed, v5.08 lands closest to the way on, v5.09 walks you to a close warp, v5.10 warps inside your own zone toward the way on, v5.11 zone-moving NPCs, v5.12 trips with legs + finding NPCs, v5.13 warps not loaded yet after zoning, v5.14 checked NPC targeting, v5.15 more ways to target + updates on your own screen, v5.16 walking legs keep the goal, v5.17 hovered line highlighted, v5.18 NPCs found by what they are, v5.19 aa stop stops nav + your own /p line opens the list, v5.20 list pages, v5.21 [X] close, v5.22 learns routes you use by hand + Mog House, v5.23 ways out of Mog Garden, v5.24 Mog Garden always out to Eastern Adoulin, v5.25 stronger row highlight, v5.30 Escha / Abyssea entrances reached by ring or warp first, v5.31 in-zone warp to the NPC (Eschan Portal #8 for Emporox) + craft-style rows + aa stop stops it all)
 
     Loaded by autoattack.lua. Finds the fastest way to a zone (or a place in
     a zone, like an Auction House) from where you stand, shows the choices in
@@ -267,6 +267,20 @@ local function enter_dest(map, kind, from)
     local k = map .. ':' .. kind .. ':' .. tostring(from)
     return N.learned[k] or ENTER_SEED[k], k
 end
+-- v5.30: where the entrances stand (Windower x / y), so a trip can go "Dim.
+-- Ring to the crag, then the Dimensional Portal" and AA can head for it before
+-- it has loaded. Konschtat / Tahrongi portals and the Maws from LandSandBoat
+-- (!pos); La Theine's portal is estimated (crag layout) -- a portal seen in
+-- game (data/nav_npcs_seen.lua) wins. r = how far from the spot it may stand.
+local ENTER_SPOTS = {
+    ['escha:102'] = {name = 'Dimensional Portal', x = 420, y = -140, r = 60},
+    ['escha:108'] = {name = 'Dimensional Portal', x = 220, y = 140, r = 40},
+    ['escha:117'] = {name = 'Dimensional Portal', x = 260, y = 340, r = 40},
+    ['abyssea:102'] = {name = 'Cavernous Maw', x = -558, y = 638, r = 40},
+    ['abyssea:108'] = {name = 'Cavernous Maw', x = 95, y = -580, r = 40},
+    ['abyssea:117'] = {name = 'Cavernous Maw', x = -28, y = -685, r = 40},
+}
+local enter_spot   -- defined after the NPC-spot file (needs SEEN)
 
 -- ---------------------------------------------------------------------------
 -- destination index
@@ -546,6 +560,16 @@ local function devices_here()
             end
         end
         for _, dv in pairs(best) do list[#list + 1] = dv end
+        -- v5.30: an Escha / Abyssea entrance not loaded yet: where it stands
+        for _, mkey in ipairs({'escha', 'abyssea'}) do
+            local live = false
+            for _, dv in ipairs(list) do if dv.map == mkey and dv.kind == 'enter' then live = true end end
+            local sp = (not live) and N.maps[mkey] and enter_spot(mkey, here)
+            if sp then
+                list[#list + 1] = {map = mkey, kind = 'enter', mob = nil, spot = {x = sp.x, y = sp.y}, radius = sp.r,
+                                   dist = math.sqrt((me_m.x - sp.x) ^ 2 + (me_m.y - sp.y) ^ 2), name = sp.name}
+            end
+        end
     end
     return list
 end
@@ -577,7 +601,7 @@ local function resolve_dev(o)
                 local m = windower.ffxi.get_mob_by_index(idx)
                 if m and m.valid_target and (m.id or 0) > 0 and tonumber(m.x) then
                     local sd = dv.spot and math.sqrt((m.x - dv.spot.x) ^ 2 + (m.y - dv.spot.y) ^ 2) or math.sqrt(m.distance or 0)
-                    if (not dv.spot or sd <= 20) and (not bd or sd < bd) then best, bd = m, sd end
+                    if (not dv.spot or sd <= (dv.radius or 20)) and (not bd or sd < bd) then best, bd = m, sd end
                 end
             end
         end
@@ -835,6 +859,26 @@ local function route(T, lm, devs, tgt)
         -- v5.12: nothing here gets you there (Chateau has no warp): first leave
         -- by an NPC or on foot, then use a warp in the next zone
         for _, o in ipairs(two_legs(T, here, spd, tgt)) do out[#out + 1] = o end
+        -- v5.30: get to a zone with an Escha / Abyssea entrance into T (Dim.
+        -- Ring to the crag), then use it -- AA carries on there by itself
+        local seen_k = {}
+        local function try_enter(k, dest)
+            local mkey, kind, fz = tostring(k):match('^(%a+):(%a+):(%d+)$')
+            fz = tonumber(fz)
+            if not (mkey and kind == 'enter' and fz and dest == T and fz ~= here and fz ~= T and not seen_k[k]) then return end
+            seen_k[k] = true
+            local sp = enter_spot(mkey, fz)
+            local menu = opt('menu_seconds')
+            local extra = (menu[mkey] or 6) + opt('zone_seconds')
+            for _, o in ipairs(options_for(fz, devs, here, spd, extra, 1, fz, sp and {x = sp.x, y = sp.y} or nil)) do
+                if o.kind ~= 'npc' and o.kind ~= 'mh' then
+                    o.to, o.then_npc = T, (sp and sp.name) or (mkey == 'abyssea' and 'Cavernous Maw') or 'the entrance'
+                    out[#out + 1] = o
+                end
+            end
+        end
+        for k, dest in pairs(N.learned or {}) do if type(dest) == 'number' then try_enter(k, dest) end end
+        for k, dest in pairs(ENTER_SEED) do if not (N.learned and N.learned[k]) then try_enter(k, dest) end end
         -- v5.11: get to a zone with an NPC that takes you to T, then talk to it
         for _, tr in ipairs(TR_TO[T] or {}) do
             if tr.zone ~= here then
@@ -971,6 +1015,17 @@ local SEEN = nil
 local function seen_load()
     if not SEEN then SEEN = read_table(data_file('nav_npcs_seen.lua')) or {} end
     return SEEN
+end
+-- v5.30: an entrance's spot: where AA saw it, else the built-in spot
+enter_spot = function(mkey, z)
+    local b = ENTER_SPOTS[mkey .. ':' .. tostring(z)]
+    if not b then return nil end
+    local ok, S = pcall(seen_load)
+    local p = ok and type(S) == 'table' and S[b.name .. '\t' .. tostring(z)]
+    if type(p) == 'table' and tonumber(p[1]) and tonumber(p[2]) then
+        return {name = b.name, x = p[1], y = p[2], r = 25}
+    end
+    return b
 end
 local function seen_save()
     local f = io.open(data_file('nav_npcs_seen.lua'), 'w')
@@ -1147,8 +1202,34 @@ end
 -- the list (texts box; click a line)
 -- ---------------------------------------------------------------------------
 local hl_hide_fn = nil   -- v5.19: set once the highlight bar exists
+-- v5.31: rows drawn the craft GUI way: every clickable line is its own box
+-- (dark blue-grey, light text); the one under the mouse gets a lighter box
+-- (+50) and white text. The window (N.gui) gives the size and background.
+local ROW_BG, ROW_TEXT, ROW_HOVER_TEXT = {24, 24, 36}, {225, 225, 225}, {255, 255, 255}
+local ROW_LOCKED = {140, 140, 140}
+N.row_objs = {}
+local function row_obj(i)
+    local t = N.row_objs[i]
+    if not t then
+        local g = opt('gui')
+        t = texts.new('', {
+            pos = {x = 0, y = 0},
+            bg = {alpha = 255, red = ROW_BG[1], green = ROW_BG[2], blue = ROW_BG[3], visible = true},
+            text = {font = g.font, size = g.size, red = ROW_TEXT[1], green = ROW_TEXT[2], blue = ROW_TEXT[3],
+                    stroke = {width = 1, alpha = 160, red = 0, green = 0, blue = 0}},
+            flags = {draggable = false},
+            padding = 0,
+        })
+        N.row_objs[i] = t
+    end
+    return t
+end
+local function rows_hide()
+    for _, t in pairs(N.row_objs) do t:hide() end
+end
 local function gui_close()
     if N.gui then N.gui:hide() end
+    rows_hide()
     if hl_hide_fn then hl_hide_fn() end
     N.rows, N.gui_lines = nil, {}
 end
@@ -1194,11 +1275,27 @@ local function gui_show(q, rows, page)
             page > 1 and '<< prev' or '       ', page, pages, #rows, page < pages and 'next >>' or '       ')
         line(cs(255, 210, 90, pl), {pager = true}, pl)
     end
+    -- v5.31: every line the same width, so the row boxes line up
+    local wmax = 0
+    for i = 1, #lines do
+        local v = plain[i] or lines[i]:gsub('\\cs%(%d+,%d+,%d+%)', ''):gsub('\\cr', '')
+        plain[i] = plain[i] or v
+        if #v > wmax then wmax = #v end
+    end
+    local padded = {}
+    for i = 1, #lines do
+        local pad = string.rep(' ', wmax - #plain[i])
+        lines[i] = lines[i] .. pad
+        padded[i] = plain[i] .. pad
+    end
     N.gui_q, N.gui_page, N.gui_pages = q, page, pages
-    N.gui_text, N.gui_plain, N.hover_li = lines, plain, nil
+    N.gui_text, N.gui_plain, N.hover_li = lines, padded, nil
     N.gui:text(table.concat(lines, '\n'))
     N.gui_lines, N.gui_count = map, #lines
     N.rows = rows
+    N.gui_locked = {}
+    for i, r in pairs(map) do if r and r.opt and r.opt.locked then N.gui_locked[i] = true end end
+    N.rows_dirty = true
     N.gui:show()
 end
 -- v5.20: another page of the list
@@ -1220,36 +1317,60 @@ local hl_made = false
 local function hl_hide()
     if hl_made then windower.prim.set_visibility(HL, false) end
 end
-local function gui_hover(li)
-    if not (N.gui and N.gui_text) or li == N.hover_li then return end
-    N.hover_li = li
-    local out = {}
-    for i, l in ipairs(N.gui_text) do
-        if i == li and N.gui_lines[i] and N.gui_plain[i] then
-            -- v5.25: bright white text with >> << on a strong blue bar
-            out[i] = cs(255, 255, 255, '>>' .. N.gui_plain[i]:sub(2) .. '<<')
-        else
-            out[i] = l
-        end
+-- v5.31: the craft GUI look -- one box per clickable row; under the mouse
+-- the box lights up (+50) and the text turns white. Title / section / page
+-- lines stay on the window background.
+local function row_style(i)
+    local t = N.row_objs[i]
+    if not t then return end
+    local hot = (i == N.hover_li)
+    local bg = ROW_BG
+    if hot then
+        t:bg_color(math.min(255, bg[1] + 50), math.min(255, bg[2] + 50), math.min(255, bg[3] + 50))
+        t:color(ROW_HOVER_TEXT[1], ROW_HOVER_TEXT[2], ROW_HOVER_TEXT[3])
+    else
+        t:bg_color(bg[1], bg[2], bg[3])
+        local c = (N.gui_locked and N.gui_locked[i]) and ROW_LOCKED or ROW_TEXT
+        t:color(c[1], c[2], c[3])
     end
-    N.gui:text(table.concat(out, '\n'))
-    if not li then return hl_hide() end
+end
+-- lay the row boxes over the window's lines (again whenever it moved / changed)
+local function rows_layout()
+    if not (N.gui and N.gui_text and N.gui:visible()) then return end
     local px, py = N.gui:pos()
     local w, h = N.gui:extents()
     local n = N.gui_count or 0
-    if n == 0 or not h or h <= 0 then return hl_hide() end
+    if n == 0 or not h or h <= 0 then return end
+    local key = px .. ',' .. py .. ',' .. h
+    if not N.rows_dirty and key == N.rows_key then return end
+    N.rows_dirty, N.rows_key = false, key
     local lh = h / n
-    if not hl_made then
-        windower.prim.create(HL)
-        hl_made = true
+    local used = {}
+    for i = 1, n do
+        local r = N.gui_lines[i]
+        if r and not r.close and not r.pager then
+            local t = row_obj(i)
+            t:text(N.gui_plain[i])
+            t:pos(math.floor(px + 0.5), math.floor(py + (i - 1) * lh + 0.5))
+            row_style(i)
+            t:show()
+            used[i] = true
+        end
     end
-    local c = opt('gui').highlight or {}
-    windower.prim.set_color(HL, c.alpha or 190, c.red or 30, c.green or 110, c.blue or 235)
-    windower.prim.set_position(HL, px, py + (li - 1) * lh)
-    windower.prim.set_size(HL, w, lh)
-    windower.prim.set_visibility(HL, true)
+    for i, t in pairs(N.row_objs) do if not used[i] then t:hide() end end
 end
-windower.register_event('unload', function() if hl_made then windower.prim.delete(HL) end end)
+N.rows_layout = rows_layout
+local function gui_hover(li)
+    if not (N.gui and N.gui_text) or li == N.hover_li then return end
+    local old = N.hover_li
+    N.hover_li = li
+    if old then row_style(old) end
+    if li then row_style(li) end
+end
+windower.register_event('unload', function()
+    if hl_made then windower.prim.delete(HL) end
+    for _, t in pairs(N.row_objs) do t:destroy() end
+end)
 hl_hide_fn = hl_hide
 
 -- ---------------------------------------------------------------------------
@@ -1317,6 +1438,7 @@ local function next_action()
         if not (c.last and c.last.expecting_zone) then
             if N.pending and N.pending.c == c then N.pending = nil end
             tell_ctx(c.ctx, my_name() .. ': at ' .. c.label .. '.')
+            if N.on_same_zone_done then N.on_same_zone_done() end   -- v5.31: then find the NPC
         end
         return
     end
@@ -1636,6 +1758,15 @@ local function goal_of(code, label, ctx)
     return g.to and g or nil
 end
 
+-- v5.31: an in-zone warp is done (no zone change): find the goal's NPC
+N.on_same_zone_done = function()
+    local g = N.goal
+    if g and g.npc and g.to == zone_id() then
+        N.goal = nil
+        coroutine.schedule(function() start_seek(g.npc, g.to, g.x, g.y, g.ctx) end, 3)
+    end
+end
+
 local function run_option(o, ctx, label, code, keep_goal)
     local p = me()
     if not p then return end
@@ -1767,6 +1898,7 @@ end)
 
 local next_tick, next_scan = 0, 0
 windower.register_event('prerender', function()
+    if N.rows_layout and N.gui then N.rows_layout() end   -- v5.31
     local now = os.clock()
     if now < next_tick then return end
     next_tick = now + ((N.armed and N.armed.walk) and 0.1 or 0.5)
@@ -1887,8 +2019,24 @@ windower.register_event('zone change', function(new_id, old_id)
     local g = N.goal
     if g then
         if new_id == g.to then
-            N.goal = nil
-            if g.npc then coroutine.schedule(function() start_seek(g.npc, g.to, g.x, g.y, g.ctx) end, 8) end
+            -- v5.31: in the NPC's zone: an in-zone warp that lands closer
+            -- (Reisenjima: Eschan Portal #8 by Emporox) when that is faster
+            -- than walking, then find the NPC
+            if not g.npc then N.goal = nil
+            else
+                coroutine.schedule(function()
+                    if N.goal ~= g then return end
+                    if zone_id() ~= g.to then N.goal = nil; return end
+                    local o = best_for(g.code)
+                    if o and o.kind == 'device' and not o.locked and o.to == g.to then
+                        tell_ctx(g.ctx, my_name() .. ': ' .. g.label .. ' -- ' .. opt_how(o) .. ' first.')
+                        run_option(o, g.ctx, g.label, g.code, true)
+                    else
+                        N.goal = nil
+                        start_seek(g.npc, g.to, g.x, g.y, g.ctx)
+                    end
+                end, 8)
+            end
         elseif g.legs > 1 and os.clock() - g.t < 900 then
             g.legs = g.legs - 1
             coroutine.schedule(function()
@@ -1942,6 +2090,8 @@ end
 -- v5.19: aa stop (typed, /p or /tell) also stops nav: walking, waiting, a
 -- warp in progress, a trip with more legs, looking for an NPC. Not the
 -- "aa stop" nav itself sends to stop AutoAttack's loop before travelling.
+-- v5.31: true while the "aa stop" nav sent itself (before a warp) is going through
+function aa_nav_guarded() return N.stop_guard ~= nil and os.clock() - N.stop_guard < 3 end
 function aa_nav_stop()
     if N.stop_guard and os.clock() - N.stop_guard < 3 then return false end
     local busy = N.armed or N.cur or N.goal or N.seek or N.pending

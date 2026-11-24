@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.29** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.31** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -102,7 +102,7 @@ Commands are entered as `//aa <command>` (with the alias) or `//lua c autoattack
 |---|---|
 | `assist` (alias: `start`) | Starts ASSIST mode. Uses `/target <bt>` to take your party's battle target, faces it and attacks. Never pulls and never uses Provoke. |
 | `pull` | Starts PULL mode. Scans for mobs, pulls them with your configured pull method, and fights. Also joins fights that trusts or party members start. |
-| `stop` | Stops the loop and sends `/attack off`. |
+| `stop` | Stops everything at once (v5.31): the fight loop (`/attack off`), aa nav, following / aa fight stacking, a running sequence (invite, retrust ...; not an update) and a warp ring waiting to go off (your ring goes back). |
 | `move [off\|pull\|provoke\|melee\|target\|<yalms>]` | Sets `move_to_target` for this session (no argument = show it). See **move_to_target** below (v4.28). |
 | `debug [0\|1\|2]` | Sets the debug level for this session: `0`/`off`, `1`/`release` (minimal), `2`/`dev` (everything, with timing). `debug file [on\|off]` turns the level-2 log file on or off. No argument shows the current setting. See [Debugging](#debugging) (v4.25). |
 | `target [packet\|native]` | Shows or sets how the script puts the cursor on a mob (saved per character). `packet` (default) injects the 0x058 target-lock packet. `native` injects nothing: it turns toward the mob and sends the game's own `/targetbnpc` until the cursor is on that mob (`TARGET-NATIVE-OK` / `TARGET-NATIVE-MISS` in the log). Added in v4.07 to test the FFXiMain.dll crashes. In `packet` mode, if 3 packets in a row miss the same mob, the next try uses `/targetbnpc` for that mob once (`TARGET-FALLBACK` in the log), then goes back to packets (v4.30, `PACKET_MISS_LIMIT`, 0 = off). |
@@ -158,7 +158,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 |---|---|
 | `invite me\|<name> [sync <name>] [leader <name>] [fight]` | Invites the sender (`me`) or a named friend. The sender and the invitee must be in your zone (any distance). If you're not the party leader you reply "send this to <leader>". If the invitee is in a Trust-only party, their AutoAttack drops it (unless they are fighting: then they tell the requester they can't). Then: finish the mobs fighting the party (no new pulls; mobs that aren't fighting you don't count), drop Trusts (`/retr all`), invite, Level Sync to `sync`, hand the leader to `leader`. A new leader calls Trusts right away and, with `fight` (or if you were fighting), starts the fight. If you stay leader: wait `trust_wait` (120s) from the Trust drop, call Trusts, then `/p aa fight` if you were fighting or `fight` was sent. In party chat only the leader acts on it. |
 | `fight` | The party leader (or a solo character) waits up to `stack_wait` (5s) for party members to stack on it, then pulls. A party member runs onto the leader's exact X/Y (within `stack_precision`, 0.3y, v4.47), then assists the leader's pulls. Members don't follow the leader between fights (v5.05): they stack on it once after each kill. If the leader changes, members switch to the new leader; if the leader leaves the party, fight mode ends. `/p aa fight` starts everyone. |
-| `stop` | Finishes the current fight (no new pulls), then stops. (Typed `//aa stop` still stops at once.) |
+| `stop` | Stops everything at once, like typed `//aa stop` (v5.31; before, it finished the current fight first): fighting, aa nav, follow / aa fight, a running sequence, a warp ring. Answers with what it stopped. |
 | `stack` | Every party member runs onto the **party leader's** exact X/Y and stops directly on top, within `stack_precision` (0.3y), whoever sends it (v4.48; a name after it is ignored). The leader stays put. |
 | `follow [name]` / `unfollow` | Follows the named friend (default: the party leader, or the sender) at `follow_range`, or stops following. Paused while you're engaged. |
 | `cancel` | Stops an invite (or Trust call) that is running. |
@@ -202,7 +202,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | Command | Does |
 |---|---|
 | `//aa nav <text>` | the list: **Zones**, **Other matches** (places inside a zone: Auction House, Mog House, Entrance, Adoulin districts, Cavernous Maw ...), then **NPCs** (by name or by what they are -- v5.18: `aa nav mystery` finds the Gobbie Mystery Box NPCs -- with their zone; the warp that lands closest wins). One zone found: every way to it. A zone with no route from where you are is still listed. |
-| left-click a line, or `//aa nav <n>` | go there (the line under the mouse gets a strong blue bar and bright white `>> ... <<` text -- v5.25; colour: `nav.gui.highlight`) |
+| left-click a line, or `//aa nav <n>` | go there (v5.31: every line is its own box like the craft window's list; the one under the mouse lights up with white text) |
 | right-click a line, or `//aa nav p<n>` | the whole party: says `/p aa nav ...`, every AA goes there its own fastest way and answers in party chat |
 | `//aa nav party <text>` / `/p aa nav <text>` | the whole party (friends only, like every party command). v5.19: with `/p aa nav <text>` you get the list and your pick goes to everyone; the others only go by themselves when the name is clear (one match / exact name). `aa stop` stops nav too. |
 | `//aa nav next` / `prev` | another page of the list (v5.20; also the mouse wheel over the list or clicking `<< prev` / `next >>`) |
@@ -218,6 +218,10 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 **Doing it:** AA stops its loop, dismounts, talks to the NPC and answers the menu with packets, so the menu never shows (the packet steps come from SuperWarp). If the NPC is more than 6 yalms away but within 50 (`walk_range`), AA walks you to it and warps (v5.09; it stops if it gets stuck, you fight, mount or `aa nav cancel`). Farther than that, the list shows how far; walk there and AA warps the moment you're in reach (gives up after 120s). Rings go on the **right ring** like `aa warp` and your ring goes back after the zone. It always answers the sender: going / arrived / why not.
 
 **Trips with legs (v5.12):** with no warp in your zone, nav leaves by an NPC (Faurie out of the Chateau) or on foot into the zone next door, then uses the warp there that is nearest to where you arrive, and carries on by itself after each zone change (up to 3 legs).
+
+**Escha / Abyssea entrances (v5.30):** a zone you can only enter through a portal (Reisenjima, Escha, Abyssea) is reached by getting to the portal's zone first -- e.g. `aa nav empor` from San d'Oria: "Dim. Ring (Dem) -> Konschtat Highlands, then talk to Dimensional Portal". After the ring AA heads for the portal (its spot is built in, so it doesn't have to be loaded yet), uses it, and then finds Emporox.
+
+**In-zone warp to the NPC (v5.31):** once in the NPC's zone, a warp inside the zone that lands closer is used first when it is faster than walking -- in Reisenjima the Eschan Portal (#8 for Emporox) -- and then AA finds the NPC.
 
 **Finding an NPC or object (v5.12):** once you are in its zone, AA tells you how far it is, which way to walk and its X / Y (every 5s), and puts the cursor on it as soon as it is within 40 yalms (`seek_range`; v5.15 tries the target packet, `/target <name>` and `/targetnpc` in turn, and only says "targeted" when the cursor is on it). Progress from `/p aa nav` shows in each player's own chat window, never in party chat (v5.15). A typo later in a word is forgiven ("ghebi damonohe" finds Ghebi Damomohe).
 

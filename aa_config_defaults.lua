@@ -1955,7 +1955,7 @@ local nav = {enabled = true,
 	hide_locked   = false,  -- true = warps this character hasn't unlocked aren't listed
 	proto_last    = true,   -- Proto-Waypoints always at the bottom of the list
 	gui           = {x = 420, y = 240, font = 'Consolas', size = 10,   -- where the list shows (//aa nav pos x y tries one)
-	                 highlight = {alpha = 190, red = 30, green = 110, blue = 235}},   -- v5.25: bar behind the line under the mouse (strong blue)
+	                 highlight = {alpha = 190, red = 30, green = 110, blue = 235}},   -- v5.25 (unused since v5.31: craft-style row boxes)
 }
 
 -- ===========================================================================

@@ -834,24 +834,45 @@ local function do_fight(ctx)
     start_mode('assist')
 end
 
--- aa stop (remote): finish the current fight, then stop
-local function do_stop(ctx)
-    if aa_nav_stop then pcall(aa_nav_stop) end   -- v5.19: /p or /tell aa stop stops aa nav too
-    if aa_clear_anchor then aa_clear_anchor('aa stop') end   -- v4.75
-    if P.follow_fight then P.follow = nil; run_stop() end
-    P.follow_fight = false
-    if not aa_running() then reply(ctx, my_name() .. ': not fighting.'); return end
-    if aa_get_mode() == 'pull' then aa_set_mode('assist') end
-    say('STOP: finishing the current fight, no new pulls.')
-    local t0, quiet = os.clock(), 0
-    while os.clock() - t0 < opt('finish_timeout') and aa_running() do
-        if party_fighting() then quiet = 0 else quiet = quiet + 1 end
-        if quiet >= 3 then break end
-        coroutine.sleep(1)
+-- v5.31: aa stop stops EVERYTHING right away (Mark, 2026-11-23: "'aa stop'
+-- should stop all aa loops and actions, such as nav, follow, fighting, etc."):
+-- aa nav, follow / aa fight (following, stacking, re-stacking, fight spot), a
+-- running sequence (invite, retrust, sneak, mount ... -- not an aa update),
+-- a warp ring waiting to go off (your ring goes back), and the fight itself
+-- (autoattack.lua: loop off, /attack off). Returns what was stopped.
+local function stop_everything(why)
+    local what = {}
+    if aa_nav_stop then
+        local ok, r = pcall(aa_nav_stop)
+        if ok and r then what[#what + 1] = 'nav' end
     end
-    if aa_running() then send('aa stop') end
-    say('stopped.')
-    if ctx.src ~= 'party' then reply(ctx, my_name() .. ': stopped.') end
+    if P.follow then what[#what + 1] = (P.follow_fight and 'aa fight' or ('following ' .. P.follow)) end
+    if P.stack then what[#what + 1] = 'stacking' end
+    P.follow, P.follow_fight, P.stack = nil, false, nil
+    run_stop()
+    if aa_clear_anchor then aa_clear_anchor(why) end   -- v4.75
+    if P.busy and P.busy ~= 'update' and not P.updating then
+        what[#what + 1] = P.busy
+        P.gen = P.gen + 1; P.busy, P.step = nil, 'idle'
+    end
+    if P.warp_ring_on or P.warping then
+        what[#what + 1] = 'warp'
+        P.warp_gen = (P.warp_gen or 0) + 1
+        P.warping = false
+        if P.warp_ring_on and aa_warp_restore then pcall(aa_warp_restore, false) end
+    end
+    if aa_running and aa_running() then what[#what + 1] = 'fighting' end
+    return what
+end
+AA_STOP_EVERYTHING = stop_everything
+
+-- aa stop (tell / party): stop everything now (v5.31; before: finish the fight first)
+local function do_stop(ctx)
+    local what = stop_everything('aa stop')
+    send('aa stop')   -- autoattack.lua: loop off, /attack off, moving off
+    local txt = my_name() .. ': stopped' .. (#what > 0 and (' (' .. table.concat(what, ', ') .. ')') or ' (nothing was running)') .. '.'
+    say(txt)
+    if ctx.src ~= 'party' or #what > 0 then reply(ctx, txt) end
 end
 
 -- ---------------------------------------------------------------------------
@@ -2265,9 +2286,13 @@ function aa_party_command(command, args)
         return false
     end
     if command == 'stop' then
-        -- typed //aa stop: stop right away (autoattack.lua does it); drop the fight-follow
-        if P.follow_fight then P.follow, P.follow_fight = nil, false; run_stop() end
-        if aa_nav_stop then pcall(aa_nav_stop) end   -- v5.19: and any aa nav
+        -- typed //aa stop: autoattack.lua stops the fight; v5.31: everything
+        -- else stops too. Not when aa nav sent it to stop the loop before a
+        -- warp (aa_nav_guarded) -- then only the fight stops.
+        if not (aa_nav_guarded and aa_nav_guarded()) then
+            local what = stop_everything('//aa stop')
+            if #what > 0 then say('STOP: ' .. table.concat(what, ', ') .. ' stopped.') end
+        end
         return false
     end
     if command == 'party' then

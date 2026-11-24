@@ -148,7 +148,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.29'
+_addon.version  = '5.31'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -11950,6 +11950,42 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.31 - aa nav in-zone warp to the NPC, aa stop stops everything, craft-style
+        nav rows (Mark, 2026-11-23: "interact with the yellow escha warp point
+        and go to point #8, as that is the portal / point where emperox is";
+        "'aa stop' should stop all aa loops and actions, such as nav, follow,
+        fighting, etc."; "make the row highlights on the GUI for nav look like
+        it does in CRAFT GUI").
+        * nav.lua: arriving in the NPC's zone, AA checks for an in-zone warp
+          that lands closer (Eschan Portal #8 is ~11y from Emporox) and uses it
+          when that beats walking; when an in-zone warp is done ("at ...") it
+          finds the NPC. Also when you start in Reisenjima.
+        * aa_party.lua stop_everything(): typed //aa stop and tell / party
+          "aa stop" now stop at once: aa nav, follow and aa fight (following,
+          stacking, fight spot), a running sequence (not aa update), a warp
+          ring waiting (ring put back), and the fight. Tell / party used to
+          finish the current fight first. The "aa stop" nav sends itself before
+          a warp (aa_nav_guarded) still stops only the fight.
+        * nav list: each clickable line is its own box (24,24,36, text
+          225,225,225); under the mouse +50 and white text -- the craft GUI's
+          list style. Replaces the v5.25 blue bar and >> <<.
+v5.30 - aa nav: Escha / Abyssea entrances reached by ring or warp first (Mark,
+        2026-11-23: "'aa nav empor' is telling me to go to Wooden Shutter instead
+        of equiping and using my Dim Ring").
+        * Emporox stands in Reisenjima, which no zone line reaches -- only the
+          Dimensional Portal at a crag. nav.lua only used an entrance when it
+          was in the zone you stood in, so from N. Sandy nothing matched and the
+          last-resort "leave by the nearest way out" (v5.23) picked the Wooden
+          Shutter to Carpenters' Landing.
+        * route(): when nothing gets you straight there, it now also looks for
+          Escha / Abyssea entrances that lead to the zone (built-in list +
+          learned ones) and offers every way to the entrance's zone, e.g.
+          "Dim. Ring (Dem) -> Konschtat Highlands, then talk to Dimensional
+          Portal". On landing AA carries on by itself and uses the portal.
+        * Entrance spots (ENTER_SPOTS): crag Dimensional Portals and Cavernous
+          Maws in La Theine / Konschtat / Tahrongi, so AA can head for the
+          portal before it has loaded (La Theine's portal spot is estimated; a
+          portal AA has seen in game, data/nav_npcs_seen.lua, wins).
 v5.29 - Plain PULL roams; only aa fight has a fight spot (Mark, 2026-11-23:
         "when in PULL mode and not 'aa fight' I don't want the script to be
         moving me back to a starting point.. I want to float around and move
