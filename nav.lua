@@ -1,5 +1,5 @@
 --[[
-    nav.lua -- AutoAttack travel: aa nav (v5.06; v5.07 NPCs + unreachable zones listed, v5.08 lands closest to the way on, v5.09 walks you to a close warp, v5.10 warps inside your own zone toward the way on, v5.11 zone-moving NPCs, v5.12 trips with legs + finding NPCs, v5.13 warps not loaded yet after zoning, v5.14 checked NPC targeting, v5.15 more ways to target + updates on your own screen, v5.16 walking legs keep the goal, v5.17 hovered line highlighted, v5.18 NPCs found by what they are, v5.19 aa stop stops nav + your own /p line opens the list, v5.20 list pages, v5.21 [X] close, v5.22 learns routes you use by hand + Mog House, v5.23 ways out of Mog Garden, v5.24 Mog Garden always out to Eastern Adoulin, v5.25 stronger row highlight, v5.30 Escha / Abyssea entrances reached by ring or warp first, v5.31 in-zone warp to the NPC (Eschan Portal #8 for Emporox) + craft-style rows + aa stop stops it all, v5.32 Walk of Echoes via Xarcabard [S] + Kupofried's medallion, Warp Ring / Warp home from a zone with no warp, v5.33 Mog Garden ways + nav.via preference, ring cooldowns, warp spots AA has seen, v5.34 walks around things in the way + learns the path, v5.35 Mog Garden: out by the Mog Dinghy / Green Thumb Moogle, never warped out, v5.36 Shadowhammer into Mog Garden via Eastern Adoulin, v5.37 Mog Garden always through Eastern Adoulin: in by Cunegonde, out by the Green Thumb Moogle, v5.38 or the Mog Dinghy's Eastern Adoulin choice, v5.39 the walk from where a Survival Guide lands counts too, v5.40 [X] close is a button that lights up, v5.41 Warp Ring / Instant Warp / Warp never on top when this zone has a Home Point or Survival Guide, v5.42 also with a nav.via way, v5.43 side-step off the Eastern Adoulin Mog House / Mog Garden spawn, v5.44 Warp Ring before Instant Warp, Walk of Echoes out by the conflux first, v5.45 aa buy for the Curio Vendor / Green Thumb Moogles, v5.46 in your Mog House: out the door first)
+    nav.lua -- AutoAttack travel: aa nav (v5.06; v5.07 NPCs + unreachable zones listed, v5.08 lands closest to the way on, v5.09 walks you to a close warp, v5.10 warps inside your own zone toward the way on, v5.11 zone-moving NPCs, v5.12 trips with legs + finding NPCs, v5.13 warps not loaded yet after zoning, v5.14 checked NPC targeting, v5.15 more ways to target + updates on your own screen, v5.16 walking legs keep the goal, v5.17 hovered line highlighted, v5.18 NPCs found by what they are, v5.19 aa stop stops nav + your own /p line opens the list, v5.20 list pages, v5.21 [X] close, v5.22 learns routes you use by hand + Mog House, v5.23 ways out of Mog Garden, v5.24 Mog Garden always out to Eastern Adoulin, v5.25 stronger row highlight, v5.30 Escha / Abyssea entrances reached by ring or warp first, v5.31 in-zone warp to the NPC (Eschan Portal #8 for Emporox) + craft-style rows + aa stop stops it all, v5.32 Walk of Echoes via Xarcabard [S] + Kupofried's medallion, Warp Ring / Warp home from a zone with no warp, v5.33 Mog Garden ways + nav.via preference, ring cooldowns, warp spots AA has seen, v5.34 walks around things in the way + learns the path, v5.35 Mog Garden: out by the Mog Dinghy / Green Thumb Moogle, never warped out, v5.36 Shadowhammer into Mog Garden via Eastern Adoulin, v5.37 Mog Garden always through Eastern Adoulin: in by Cunegonde, out by the Green Thumb Moogle, v5.38 or the Mog Dinghy's Eastern Adoulin choice, v5.39 the walk from where a Survival Guide lands counts too, v5.40 [X] close is a button that lights up, v5.41 Warp Ring / Instant Warp / Warp never on top when this zone has a Home Point or Survival Guide, v5.42 also with a nav.via way, v5.43 side-step off the Eastern Adoulin Mog House / Mog Garden spawn, v5.44 Warp Ring before Instant Warp, Walk of Echoes out by the conflux first, v5.45 aa buy for the Curio Vendor / Green Thumb Moogles, v5.46 in your Mog House: out the door first, v5.49 aa trade: seals / crests to Shami, Rem's Tales to Monisette, Shemo exchanges, v5.50 aa trade seals / crests both trade every seal and crest)
 
     Loaded by autoattack.lua. Finds the fastest way to a zone (or a place in
     a zone, like an Auction House) from where you stand, shows the choices in
@@ -1562,6 +1562,7 @@ local hl_hide_fn = nil   -- v5.19: set once the highlight bar exists
 -- (+50) and white text. The window (N.gui) gives the size and background.
 local ROW_BG, ROW_TEXT, ROW_HOVER_TEXT = {24, 24, 36}, {225, 225, 225}, {255, 255, 255}
 local ROW_LOCKED = {140, 140, 140}
+local ROW_HOT_TEXT = {255, 210, 90}   -- v5.49: aa trade's suggested exchange
 N.row_objs = {}
 local function row_obj(i)
     local t = N.row_objs[i]
@@ -1604,7 +1605,7 @@ local function gui_show(q, rows, page)
     local lines, map, plain = {}, {}, {}
     local function line(s, row, p) lines[#lines + 1] = s; map[#lines] = row; plain[#lines] = p end
     -- v5.21: the title line is the close button ([X])
-    local title = string.format(' AA nav "%s"   left-click: go   right-click: whole party        [X] close ', q)
+    local title = rows.title or string.format(' AA nav "%s"   left-click: go   right-click: whole party        [X] close ', q)
     line(cs(255, 210, 90, title), {close = true}, title)
     -- v5.20: pages of max_rows lines; mouse wheel / the << >> line / aa nav next|prev
     local maxr = math.max(1, tonumber(opt('max_rows')) or 14)
@@ -1612,18 +1613,28 @@ local function gui_show(q, rows, page)
     page = math.min(math.max(1, page or 1), pages)
     local first, last = (page - 1) * maxr + 1, math.min(#rows, page * maxr)
     local section = nil
+    local hot = {}   -- v5.49: aa trade rows (text = the line, info = not clickable, hot = suggested)
     for i = first, last do
         local r = rows[i]
-        if r.section ~= section then
+        if r.text then
+            if r.info then
+                line(cs(r.head and 120 or 200, r.head and 200 or 200, r.head and 255 or 200, r.text), nil, r.text)
+            else
+                line(r.text, r, r.text)
+                if r.hot then hot[#lines] = true end
+            end
+        elseif r.section ~= section then
             section = r.section
             line(cs(120, 200, 255, section == 'zone' and ' Zones' or section == 'npc' and ' NPCs'
                                    or ' Other matches (places in a zone)'))
         end
+        if not r.text then
         local o = r.opt
         local s = string.format(' %2d  %-50s %-6s %-8s %s ', i, r.label:sub(1, 50), opt_tag(o), fmt_time(o.time), opt_how(o))
         local p = s
         if o.locked then s = cs(140, 140, 140, s) end
         line(s, r, p)
+        end
     end
     if pages > 1 then
         local pl = string.format(' %s  page %d of %d (%d found)  %s    mouse wheel / click << >> / aa nav next | prev ',
@@ -1648,7 +1659,7 @@ local function gui_show(q, rows, page)
     N.gui:text(table.concat(lines, '\n'))
     N.gui_lines, N.gui_count = map, #lines
     N.rows = rows
-    N.gui_locked = {}
+    N.gui_locked, N.gui_hot = {}, hot
     for i, r in pairs(map) do if r and r.opt and r.opt.locked then N.gui_locked[i] = true end end
     N.rows_dirty = true
     N.gui:show()
@@ -1698,7 +1709,7 @@ local function row_style(i)
         t:color(ROW_HOVER_TEXT[1], ROW_HOVER_TEXT[2], ROW_HOVER_TEXT[3])
     else
         t:bg_color(bg[1], bg[2], bg[3])
-        local c = (N.gui_locked and N.gui_locked[i]) and ROW_LOCKED or ROW_TEXT
+        local c = (N.gui_locked and N.gui_locked[i]) and ROW_LOCKED or (N.gui_hot and N.gui_hot[i]) and ROW_HOT_TEXT or ROW_TEXT
         t:color(c[1], c[2], c[3])
     end
 end
@@ -2753,6 +2764,7 @@ windower.register_event('login', function() coroutine.schedule(load_char, 3) end
 -- ---------------------------------------------------------------------------
 function N.pick(row, party)
     gui_close()
+    if row.trade then return row.trade(party) end   -- v5.49: aa trade list
     if party or N.gui_party then   -- v5.19: a list opened by your own "/p aa nav ..." picks for the whole party
         if aa_party_run then aa_party_run('aa nav ' .. row.code) else say('party commands are not loaded.') end
         return
@@ -2788,6 +2800,7 @@ function aa_nav_stop()
     if N.cur then release_menu(N.cur); N.cur = nil end
     N.pending, N.goal, N.seek = nil, nil, nil
     gui_close()
+    if aa_trade_stop and aa_trade_stop() then busy = true end   -- v5.49
     if busy then windower.add_to_chat(207, '[AA] nav stopped.') end
     return busy and true or false
 end
@@ -3278,6 +3291,601 @@ function aa_buy_command(ctx, words, reply)
     end
     coroutine.schedule(function() buy_run(ctx, pick.npc, pick.id, qty, reply) end, 0)
 end
+
+-- ===========================================================================
+-- v5.49: aa trade seals | crests | rems (Mark, 2026-11-23: "let's add a new
+-- feature 'aa trade [type]'. For this round is focused on trading items to
+-- store at stuff npcs"). Takes every beastmen's seal / Kindred's seal (seals)
+-- or Kindred's / High / Sacred Kindred's crest (crests) out of the inventory,
+-- satchel, sack and case and trades them to Shami (Port Jeuno H-8) for
+-- storage, 8 stacks per trade; Rem's Tale Ch.1-10 the same to Monisette
+-- (Port Jeuno I-8). Shami holds 9999 of each kind, Monisette 255 of each
+-- chapter. A kind that is full stays with you and AA says so; for seals and
+-- crests a list opens with what Shami holds and an exchange at Shemo (Shami's
+-- brother, next to him), who swaps STORED seals/crests 3:1 (2:1 during a
+-- campaign -- AA reads the rate from Shemo's own words): the suggestion is
+-- 3000 (2000) of the full kind for 1000 of the kind you have least of.
+-- Shami's / Shemo's lines in chat give AA the stored counts
+-- (data/trade_<name>.lua). The Shemo exchange: AA walks you to him, opens
+-- his menu and tells you exactly what to pick and the number to enter (his
+-- offer / balances are drawn by the game from the menu itself, so AA can't
+-- check them with the menu hidden); it reads the result and records your
+-- menu answers for a later version to do it alone.
+-- ===========================================================================
+do
+local SEAL = {   -- order = Shemo's list; key = Shami's / Shemo's plural words
+    {id = 1126, key = "beastmen's seals",        short = "Beastmen's Seal"},
+    {id = 1127, key = "kindred's seals",         short = "Kindred's Seal"},
+    {id = 2955, key = "kindred's crests",        short = "Kindred's Crest"},
+    {id = 2956, key = "high kindred's crests",   short = "H. Kindred Crest"},
+    {id = 2957, key = "sacred kindred's crests", short = "S. Kindred Crest"},
+}
+local BYKEY, BYID = {}, {}
+for i, e in ipairs(SEAL) do e.n = i; BYKEY[e.key] = e; BYID[e.id] = e end
+local KINDS = {
+    -- v5.50: seals and crests both take every kind (Mark: "aa trade seals and aa trade crests
+    -- (with trade both seals and crests)")
+    seals  = {npcs = {'Shami', 'Shemo'}, ids = {1126, 1127, 2955, 2956, 2957}, cap = 9999, label = 'seals & crests'},
+    rems   = {npcs = {'Monisette'}, ids = {4064, 4065, 4066, 4067, 4068, 4069, 4070, 4071, 4072, 4073}, cap = 255, label = "Rem's Tales"},
+}
+local FROM_BAGS = {5, 6, 7}   -- satchel, sack, case (wherever you are)
+local SEAL_NPC = {Shami = true, Shemo = true}
+local T = {char = nil, d = nil, run = nil, ex = nil, stop = false}
+AA_TRADE = T
+
+local function tfile() return data_file('trade_' .. my_name() .. '.lua') end
+local function tdata()
+    local n = my_name()
+    if T.char ~= n then
+        T.char = n
+        T.d = read_table(tfile()) or {}
+        T.d.counts = T.d.counts or {}
+        T.d.learned = T.d.learned or {}
+    end
+    return T.d
+end
+local function tsave()
+    local d = tdata()
+    local f = io.open(tfile(), 'w')
+    if not f then return end
+    f:write('-- AutoAttack aa trade: what Shami holds for ' .. T.char .. ' (from his / Shemo\'s words) + the learned Shemo exchange\nreturn {\n')
+    f:write('    counts = {')
+    for _, e in ipairs(SEAL) do
+        if d.counts[e.id] then f:write(string.format(' [%d] = %d,', e.id, d.counts[e.id])) end
+    end
+    f:write(' },\n')
+    f:write(string.format('    counts_t = %d,\n', d.counts_t or 0))
+    if d.rate then f:write(string.format('    rate = %d, rate_t = %d,   -- Shemo: %d for 1\n', d.rate, d.rate_t or 0, d.rate)) end
+    if d.rate_set then f:write(string.format('    rate_set = %d,   -- aa trade rate\n', d.rate_set)) end
+    f:write('    learned = {\n')
+    for k, l in pairs(d.learned) do
+        f:write(string.format('        [%q] = {menu = %d, qty = %d, seq = %q},\n', k, l.menu or 0, l.qty or 0, l.seq or ''))
+    end
+    f:write('    },\n}\n')
+    f:close()
+end
+local function tname(id) local it = res.items[id]; return it and it.en or ('item ' .. tostring(id)) end
+
+-- Shemo's rate: aa trade rate 2|3 wins; a rate he said in the last 3 days next; else 3:1
+local function rate_now()
+    local d = tdata()
+    if d.rate_set then return d.rate_set, 'set by you' end
+    if d.rate and os.time() - (d.rate_t or 0) < 3 * 86400 then
+        return d.rate, (d.rate == 2 and 'campaign, Shemo said so ' or 'Shemo said so ') .. os.date('%m/%d %H:%M', d.rate_t)
+    end
+    return 3, 'normal rate'
+end
+local function set_rate(r, why)
+    if r ~= 2 and r ~= 3 then return end
+    local d = tdata()
+    if d.rate ~= r then dbg('trade: Shemo rate ' .. r .. ':1 (' .. why .. ')') end
+    d.rate, d.rate_t = r, os.time()
+    tsave()
+end
+local function set_count(key, n)
+    local e = BYKEY[(key or ''):lower()]
+    if not (e and n) then return end
+    local d = tdata()
+    d.counts[e.id], d.counts_t = n, os.time()
+    T.dirty = true
+end
+
+-- ---------------------------------------------------------------------------
+-- what Shami / Shemo / Monisette say
+-- ---------------------------------------------------------------------------
+windower.register_event('incoming text', function(original, modified, mode)
+    if type(original) ~= 'string' then return end
+    local t = original:gsub('[%c\127-\255]', ''):gsub('^%s+', '')
+    local who, msg = t:match('^(%a+) : (.+)$')
+    if not who then
+        -- the exchange window line (no speaker)
+        local a, an, b, bn, want, mx = t:match('balance of (%d+) (.-) and (%d+) (.-)%.Enter the number of (.-) you wish to obtain: %(Maximum: (%d+)%)')
+        if a then
+            a, b, mx = tonumber(a), tonumber(b), tonumber(mx)
+            set_count(an, a); set_count(bn, b)
+            local give = (want:lower() == an:lower()) and b or a
+            if mx and mx > 0 then set_rate(math.floor(give / mx + 0.001), 'Maximum ' .. mx .. ' of ' .. give) end
+            if T.ex then T.ex.window = true end
+            tsave()
+        end
+        return
+    end
+    if T.run then T.run.heard = os.clock() end
+    if who == 'Monisette' then return end
+    if not SEAL_NPC[who] then return end
+    local n, key = msg:match('^(%d+) (.-)%.$')
+    if n then set_count(key, tonumber(n)) end
+    local k2, n2 = msg:match('total balance of (.-) to (%d+)%.')
+    if k2 then set_count(k2, tonumber(n2)) end
+    local n3, k3, n4, k4 = msg:match('total balance to (%d+) (.-) and (%d+) (.-)%.')
+    if n3 then set_count(k3, tonumber(n3)); set_count(k4, tonumber(n4)) end
+    local n5, k5 = msg:match('got a balance of (%d+) (.-)%.$')
+    if n5 then set_count(k5, tonumber(n5)) end
+    local r = msg:match('of your choice for (%w+) of yours')
+    if r then set_rate(tonumber(r) or (r == 'two' and 2) or (r == 'three' and 3), 'Shemo: for ' .. r .. ' of yours') end
+    local tk, tkey, gkey = msg:match("takin' (%d+) (.-) off your hands to give as many (.-) as ya")
+    if tk and T.ex then T.ex.quote = {n = tonumber(tk), give = BYKEY[tkey:lower()], get = BYKEY[gkey:lower()], t = os.clock()} end
+    if msg:find('Another satisfied customer', 1, true) and T.ex then T.ex.done = os.clock() end
+    if T.dirty then T.dirty = false; tsave() end
+end)
+
+-- ---------------------------------------------------------------------------
+-- items: count, pull out of satchel / sack / case, trade
+-- ---------------------------------------------------------------------------
+local function carried(ids, bags)
+    local set = {}
+    for _, id in ipairs(ids) do set[id] = true end
+    local out, stacks = {}, {}
+    for _, bag in ipairs(bags) do
+        local b = windower.ffxi.get_items(bag)
+        if type(b) == 'table' and b.enabled ~= false then
+            for slot, it in ipairs(b) do
+                if type(it) == 'table' and set[it.id] and (it.count or 0) > 0 then
+                    out[it.id] = (out[it.id] or 0) + it.count
+                    stacks[#stacks + 1] = {bag = bag, slot = slot, id = it.id, count = it.count, status = it.status or 0}
+                end
+            end
+        end
+    end
+    return out, stacks
+end
+local function trade_npc(mob, stacks)
+    local q, ix = {}, {}
+    for i = 1, 9 do q[i], ix[i] = 0, 0 end
+    for i, st in ipairs(stacks) do q[i], ix[i] = st.count, st.slot end
+    local pk = ('C4I11C10HI'):pack(0x36, 0x20, 0, 0, mob.id,
+        q[1], q[2], q[3], q[4], q[5], q[6], q[7], q[8], q[9], 0,
+        ix[1], ix[2], ix[3], ix[4], ix[5], ix[6], ix[7], ix[8], ix[9], 0,
+        mob.index, #stacks)
+    windower.packets.inject_outgoing(0x36, pk)
+end
+local function in_event()
+    local p = me()
+    return p and p.status == 4
+end
+local function find_npc(names)
+    local best, bd
+    for _, n in ipairs(names) do
+        local m, d = shop_mob({[n] = true})
+        if m and (not bd or d < bd) then best, bd = m, d end
+    end
+    return best, bd
+end
+local function get_there(names, reply)
+    local mob, d = find_npc(names)
+    if not mob then
+        return nil, string.format('no %s here -- %s is in Port Jeuno (aa nav %s).', names[1], names[1], names[1]:lower())
+    end
+    if d > 5.5 then
+        if d > (tonumber(opt('walk_range')) or 50) then
+            return nil, string.format('%s is %dy away -- walk closer (aa nav %s).', mob.name, math.floor(d + 0.5), mob.name:lower())
+        end
+        if not walk_to(mob, reply) then return nil, 'could not get to ' .. mob.name end
+        mob = windower.ffxi.get_mob_by_index(mob.index) or mob
+    end
+    return mob
+end
+
+local show_list   -- forward
+
+local function store_run(kind, reply)
+    local K = KINDS[kind]
+    local r = {kind = kind, t0 = os.clock()}
+    T.run, T.stop = r, false
+    local function done(msg)
+        if T.run == r then T.run = nil end
+        if msg then reply(my_name() .. ': ' .. msg) end
+    end
+    local p = me()
+    if not p then return done() end
+    if p.status ~= 0 then return done('stand still first (not fighting, resting or in a menu).') end
+    local all, _ = carried(K.ids, {0, 5, 6, 7})
+    local total = 0
+    for _, n in pairs(all) do total = total + n end
+    local far, _ = carried(K.ids, {1, 2, 4, 9})   -- Mog House only
+    local farn = 0
+    for _, n in pairs(far) do farn = farn + n end
+    if total == 0 then
+        return done(string.format('no %s in your inventory, satchel, sack or case%s.', K.label,
+            farn > 0 and string.format(' (%d in your Mog Safe / Storage / Locker -- move them to your inventory first)', farn) or ''))
+    end
+    local mob, why = get_there(K.npcs, reply)
+    if not mob then return done(why) end
+    reply(string.format('%s: trading %d %s to %s...', my_name(), total, K.label, mob.name))
+    local stored, full, notified = {}, {}, false
+    -- never hand over more than fits: Shami's count (his own words) + what we gave
+    local d = tdata()
+    local known = {}
+    -- v5.50: Shami refuses what doesn't fit and nothing is lost (Mark, 2026-11-23: "Shami
+    -- will not accept past 9999, and extra traded will not be lost") -- no cap for
+    -- seals / crests; Monisette (unknown) still never more than 255 a chapter a run
+    local function room(id)
+        if kind == 'rems' then return K.cap - (known[id] or 0) end
+        return nil
+    end
+    local function counts_fresh()
+        if kind == 'rems' then return true end
+        if os.time() - (d.counts_t or 0) > 86400 then return false end
+        for _, id in ipairs(K.ids) do if (all[id] or 0) > 0 and not d.counts[id] then return false end end
+        return true
+    end
+    local probe = false   -- v5.50: no 1-item first trade any more
+    for round = 1, 80 do
+        if T.stop then return done('trade stopped.') end
+        -- 1. top up the inventory from satchel / sack / case
+        local _, inv = carried(K.ids, {0})
+        local ready = {}
+        for _, st in ipairs(inv) do if st.status == 0 and not full[st.id] then ready[#ready + 1] = st end end
+        if #ready < 8 then
+            local _, other = carried(K.ids, FROM_BAGS)
+            local moved = 0
+            for _, st in ipairs(other) do
+                if #ready + moved >= 8 or free_slots() - moved < 1 then break end
+                if not full[st.id] then
+                    windower.ffxi.get_item(st.bag, st.slot, st.count)
+                    moved = moved + 1
+                    coroutine.sleep(0.3)
+                end
+            end
+            if moved > 0 then
+                local want = #ready + moved
+                wait_for(function()
+                    local _, s2 = carried(K.ids, {0})
+                    local n = 0
+                    for _, st in ipairs(s2) do if st.status == 0 and not full[st.id] then n = n + 1 end end
+                    return n >= want
+                end, 4)
+                _, inv = carried(K.ids, {0})
+                ready = {}
+                for _, st in ipairs(inv) do if st.status == 0 and not full[st.id] then ready[#ready + 1] = st end end
+            end
+        end
+        if #ready == 0 then break end
+        while #ready > 8 do table.remove(ready) end
+        -- what still fits (seals / crests: 9999 each)
+        local fit, left = {}, {}
+        for _, st in ipairs(ready) do
+            local rm = left[st.id]
+            if rm == nil then rm = room(st.id) or math.huge end
+            if probe then rm = (fit[1] and 0) or 1 end   -- first trade: 1 item, Shami tells us what he holds
+            if rm <= 0 then
+                if not probe then full[st.id] = true end
+            else
+                local take = math.min(st.count, rm)
+                fit[#fit + 1] = {bag = st.bag, slot = st.slot, id = st.id, count = take, status = st.status}
+                left[st.id] = rm - take
+            end
+        end
+        ready = fit
+        if #ready == 0 then
+            local any = false
+            for _, st in ipairs(inv) do if st.status == 0 and not full[st.id] then any = true end end
+            if not any then
+                local _, other = carried(K.ids, FROM_BAGS)
+                for _, st in ipairs(other) do if not full[st.id] then any = true end end
+            end
+            if not any then break end
+        end
+        -- 2. trade (one kind at a time once something was refused: finds the full one)
+        if r.single then
+            local id = ready[1].id
+            local one = {}
+            for _, st in ipairs(ready) do if st.id == id then one[#one + 1] = st end end
+            ready = one
+        end
+        mob = windower.ffxi.get_mob_by_index(mob.index) or mob
+        if math.sqrt(mob.distance or 0) > 6 then return done(mob.name .. ' is too far away now -- trade stopped.') end
+        local before = carried(K.ids, {0})
+        local cb, backup = {}, nil
+        for _, id in ipairs(K.ids) do cb[id] = d.counts[id] end
+        if probe then   -- Shami lists only the kinds he holds: clear ours, a kind he doesn't name is 0
+            backup = cb
+            for _, id in ipairs(K.ids) do d.counts[id] = nil end
+        end
+        local said_t = os.clock()
+        local ids_in = {}
+        for _, st in ipairs(ready) do ids_in[st.id] = (ids_in[st.id] or 0) + st.count end
+        dbg(string.format('trade: round %d, %d stacks to %s', round, #ready, mob.name))
+        trade_npc(mob, ready)
+        local took = wait_for(function()
+            local now = carried(K.ids, {0})
+            for id in pairs(ids_in) do if (now[id] or 0) < (before[id] or 0) then return true end end
+            return false
+        end, 6)
+        -- 3. let the NPC finish talking
+        local t1 = os.clock()
+        while in_event() and os.clock() - t1 < 30 do
+            if not notified and os.clock() - t1 > 8 then
+                notified = true
+                reply(my_name() .. ': click through ' .. mob.name .. '\'s talk -- AA carries on after it.')
+            end
+            coroutine.sleep(0.25)
+        end
+        coroutine.sleep(0.8)
+        local now = carried(K.ids, {0})
+        local refused = {}
+        local heard = (r.heard or 0) >= said_t
+        if backup then
+            if heard then
+                for _, id in ipairs(K.ids) do if d.counts[id] == nil then d.counts[id] = 0 end end
+                d.counts_t = os.time()
+                tsave()
+            else
+                for id, v in pairs(backup) do d.counts[id] = v end
+            end
+        end
+        for id, n in pairs(ids_in) do
+            local gone = (before[id] or 0) - (now[id] or 0)
+            if gone > 0 then
+                stored[id] = (stored[id] or 0) + gone
+                if d.counts[id] ~= cb[id] and heard then known[id] = d.counts[id]   -- his new total
+                else known[id] = math.max(known[id] or 0, cb[id] or 0) + gone end
+            end
+            if gone < n then refused[#refused + 1] = id end
+        end
+        if not took then
+            if #refused > 1 and not r.single then
+                r.single = true   -- mixed trade refused: try one kind at a time
+            elseif #refused >= 1 then
+                for _, id in ipairs(refused) do full[id] = true end
+            else
+                return done(mob.name .. ' did not take the trade.')
+            end
+        else
+            for _, id in ipairs(refused) do full[id] = true end
+        end
+        if in_event() then return done(mob.name .. '\'s talk is still open -- finish it and "aa trade ' .. kind .. '" again.') end
+        if probe then
+            probe = not counts_fresh()
+            if probe and took then
+                return done(mob.name .. ' did not say what he holds -- AA stopped to be safe (1 item traded, nothing lost; "aa trade ' .. kind .. '" tries again).')
+            end
+        end
+    end
+    -- summary
+    local parts = {}
+    for _, id in ipairs(K.ids) do
+        if stored[id] then parts[#parts + 1] = string.format('%d %s', stored[id], tname(id)) end
+    end
+    reply(string.format('%s: stored %s with %s.', my_name(), #parts > 0 and table.concat(parts, ', ') or 'nothing', mob.name))
+    for _, id in ipairs(K.ids) do
+        local e = BYID[id]
+        if e and d.counts[id] and d.counts[id] >= K.cap then full[id] = true end
+    end
+    local fl = {}
+    for _, id in ipairs(K.ids) do
+        if full[id] then
+            local left = carried({id}, {0, 5, 6, 7})[id] or 0
+            fl[#fl + 1] = string.format('%s (%d still with you)', tname(id), left)
+        end
+    end
+    if #fl > 0 then
+        reply(string.format('%s: %s is FULL on %s (%d each).', my_name(), mob.name, table.concat(fl, ', '), K.cap))
+    end
+    if farn > 0 then reply(string.format('%s: %d more %s are in your Mog House storage -- not traded.', my_name(), farn, K.label)) end
+    done()
+    if kind ~= 'rems' then
+        local fid = nil
+        for _, id in ipairs(K.ids) do if full[id] then fid = id; break end end
+        if fid then show_list(fid, reply) end
+    end
+end
+
+-- ---------------------------------------------------------------------------
+-- the list: what Shami holds + exchanges at Shemo
+-- ---------------------------------------------------------------------------
+local exch_run   -- forward
+local function count_str(n) return n and tostring(n) or '?' end
+local function plan(fid)
+    local d = tdata()
+    local rate = rate_now()
+    local rows = {}
+    for _, e in ipairs(SEAL) do
+        if e.id ~= fid then
+            local have = d.counts[e.id]
+            local room = 9999 - (have or 0)
+            local get = math.min(1000, room)
+            local from_have = d.counts[fid] or 9999
+            get = math.min(get, math.floor(from_have / rate))
+            if get > 0 then rows[#rows + 1] = {e = e, have = have, get = get, give = get * rate} end
+        end
+    end
+    table.sort(rows, function(a, b)
+        local ha, hb = a.have or 1e9, b.have or 1e9
+        if ha ~= hb then return ha < hb end
+        return a.e.n < b.e.n
+    end)
+    return rows, rate
+end
+show_list = function(fid, reply)
+    local d = tdata()
+    local rate, rwhy = rate_now()
+    local carry = carried({1126, 1127, 2955, 2956, 2957}, {0, 5, 6, 7})
+    local rows = {}
+    local fe = fid and BYID[fid]
+    rows.title = fe and string.format(' AA trade -- Shami is FULL on %s   left-click: exchange at Shemo   [X] close ', fe.short)
+                     or ' AA trade -- seals & crests   left-click: exchange at Shemo   [X] close '
+    rows[#rows + 1] = {info = true, head = true, text = string.format(' Stored with Shami%s (+ carried)', d.counts_t and d.counts_t > 0 and (' as of ' .. os.date('%m/%d %H:%M', d.counts_t)) or '')}
+    for _, e in ipairs(SEAL) do
+        local c = d.counts[e.id]
+        rows[#rows + 1] = {info = true, text = string.format('   %-18s %5s%s%s', e.short, count_str(c),
+            (carry[e.id] or 0) > 0 and string.format('  (+%d)', carry[e.id]) or '',
+            (c and c >= 9999) and '  FULL' or '')}
+    end
+    if not next(d.counts) then
+        rows[#rows + 1] = {info = true, text = '   (counts unknown -- trade one seal to Shami / talk to Shemo and AA reads them)'}
+    end
+    if fe then
+        local opts = plan(fid)
+        rows[#rows + 1] = {info = true, head = true, text = string.format(' Exchange at Shemo: %d for 1 (%s)', rate, rwhy)}
+        for i, o in ipairs(opts) do
+            rows[#rows + 1] = {
+                text = string.format('   %4d %-17s -> %4d %-17s  you have %s%s', o.give, fe.short, o.get, o.e.short, count_str(o.have),
+                    i == 1 and '  << least' or ''),
+                hot = (i == 1),
+                trade = function() coroutine.schedule(function() exch_run(fid, o.e.id, o.get, reply) end, 0) end,
+            }
+        end
+        if #opts == 0 then rows[#rows + 1] = {info = true, text = '   nothing to exchange into (all others full?)'} end
+    end
+    gui_show('trade', rows)
+    N.gui_party = false
+    -- the suggested (lowest) exchange starts highlighted
+    for li, r in pairs(N.gui_lines or {}) do
+        if r and r.hot then N.hover_li = li end
+    end
+    N.rows_dirty = true
+end
+
+-- ---------------------------------------------------------------------------
+-- Shemo's exchange: learn it once (by hand), then answer his menu ourselves
+-- ---------------------------------------------------------------------------
+-- watch the menu answers sent to Shemo (by hand: learning; ours are injected)
+windower.register_event('outgoing chunk', function(id, data, modified, injected, blocked)
+    if id ~= 0x05B or injected then return end
+    local x = T.ex
+    if not x then return end
+    local p = packets.parse('outgoing', data)
+    if p['Target'] ~= x.npc_id then return end
+    x.seq[#x.seq + 1] = {menu = p['Menu ID'], opt = p['Option Index'], unk = p['_unknown1'] or 0, auto = p['Automated Message'] and true or false}
+end)
+windower.register_event('incoming chunk', function(id, data, modified, injected, blocked)
+    if injected or (id ~= 0x034 and id ~= 0x032) then return end
+    local x = T.ex
+    if not x then return end
+    local p = packets.parse('incoming', data)
+    if p['NPC'] ~= x.npc_id then return end
+    x.menu = x.menu or p['Menu ID']
+end)
+
+exch_run = function(fid, tid, get, reply)
+    if T.ex or T.run then return reply(my_name() .. ': a trade is already running.') end
+    local d = tdata()
+    local rate = rate_now()
+    local fe, te = BYID[fid], BYID[tid]
+    local mob, why = get_there({'Shemo'}, reply)
+    if not mob then return reply(my_name() .. ': ' .. why) end
+    -- Shemo's words (his offer, the balances) are drawn by the game from his
+    -- menu, so AA can only check an exchange with the menu on screen: AA
+    -- talks to him, you pick, AA reads the result (and keeps your menu
+    -- answers in data/trade_<name>.lua for a later version to do it itself)
+    local x = {npc_id = mob.id, npc_index = mob.index, seq = {}, t = os.clock(), fid = fid, tid = tid, get = get}
+    T.ex, T.stop = x, false
+    poke(mob)
+    reply(string.format("%s: Shemo's menu: trade -> %s -> %s -> enter %d -> yes  (%d for 1 = %d %s)",
+        my_name(), fe.short, te.short, get, rate, get * rate, fe.short))
+    wait_for(function() return x.done ~= nil or T.stop or T.ex ~= x end, 180)
+    if T.ex == x then T.ex = nil end
+    local q = x.quote
+    if x.done and q then
+        local r2 = rate_now()
+        local ob = math.floor(q.n / r2 + 0.5)
+        if q.give == fe and q.get == te and #x.seq > 0 then
+            d.learned[fid .. '>' .. tid] = {menu = x.menu or 0, qty = ob, seq = seq_str(x.seq)}
+            tsave()
+        end
+        reply(string.format('%s: exchanged %d %s for %d %s (%d:1). aa trade list shows the new counts.', my_name(), q.n,
+            q.give and q.give.short or '?', ob, q.get and q.get.short or '?', r2))
+        if q.give ~= fe or q.get ~= te then reply(my_name() .. ': (not the exchange AA suggested -- fine, counts updated)') end
+    elseif not x.done then
+        reply(my_name() .. ': no exchange seen with Shemo (cancelled or timed out).')
+    end
+end
+
+local ALIAS = {
+    bs = 1126, beast = 1126, beastmen = 1126, ["beastmen's"] = 1126, beastmens = 1126,
+    ks = 1127, kseal = 1127, kindredseal = 1127,
+    kc = 2955, kcrest = 2955, kindredcrest = 2955,
+    hkc = 2956, high = 2956, hk = 2956,
+    skc = 2957, sacred = 2957, sk = 2957,
+}
+local function seal_arg(w)
+    w = (w or ''):lower():gsub("[%s%.']", '')
+    if ALIAS[w] then return ALIAS[w] end
+    for _, e in ipairs(SEAL) do
+        local s = e.short:lower():gsub("[%s%.']", '')
+        if s == w or e.key:gsub("[%s%.']", '') == w or e.key:gsub("[%s%.']", ''):gsub('s$', '') == w then return e.id end
+    end
+end
+
+function aa_trade_stop()
+    local busy = T.run or T.ex
+    T.stop = true
+    if T.ex then T.ex = nil end
+    return busy and true or false
+end
+
+-- aa trade seals | crests | rems | list | swap <from> <to> [n] | rate 2|3|auto | forget <from> <to>
+function aa_trade_command(ctx, words, reply)
+    local w = {}
+    for _, x in ipairs(words or {}) do w[#w + 1] = x end
+    local first = (w[1] or ''):lower():gsub("'", '')
+    if first == '' or first == 'help' then
+        return reply("aa trade seals (or crests: every seal and crest to Shami) | rem / rems (Rem's Tales to Monisette) | aa trade list | aa trade swap <from> <to> [how many you get] | aa trade rate 2|3|auto")
+    end
+    if (first == 'seals' or first == 'seal' or first == 'crests' or first == 'crest' or first == 'rem' or first == 'rems' or first == 'tales') then
+        if T.run or T.ex then return reply(my_name() .. ': a trade is already running (aa stop stops it).') end
+        local kind = (first:sub(1, 4) == 'seal' or first:sub(1, 5) == 'crest') and 'seals' or 'rems'
+        return coroutine.schedule(function() store_run(kind, reply) end, 0)
+    end
+    if first == 'list' or first == 'status' or first == 'counts' then
+        local d = tdata()
+        local fid = nil
+        for _, e in ipairs(SEAL) do if (d.counts[e.id] or 0) >= 9999 then fid = e.id; break end end
+        if w[2] then fid = seal_arg(table.concat(w, '', 2)) or fid end
+        return show_list(fid, reply)
+    end
+    if first == 'rate' then
+        local d = tdata()
+        local v = (w[2] or ''):lower():gsub(':1$', '')
+        if v == '2' or v == '3' then d.rate_set = tonumber(v)
+        elseif v == 'auto' or v == 'off' then d.rate_set = nil
+        else
+            local r, why = rate_now()
+            return reply(string.format('%s: Shemo exchange %d for 1 (%s). aa trade rate 2|3|auto', my_name(), r, why))
+        end
+        tsave()
+        local r, why = rate_now()
+        return reply(string.format('%s: Shemo exchange now %d for 1 (%s).', my_name(), r, why))
+    end
+    if first == 'swap' or first == 'exchange' or first == 'forget' then
+        local a, b = seal_arg(w[2]), seal_arg(w[3])
+        if not (a and b) or a == b then
+            return reply('aa trade ' .. first .. ' <from> <to> -- bs, ks, kc, hkc, skc (beastmen\'s seal, Kindred\'s seal, Kindred\'s / High / Sacred Kindred\'s crest)')
+        end
+        if first == 'forget' then
+            tdata().learned[a .. '>' .. b] = nil
+            tsave()
+            return reply(string.format('%s: forgot the learned %s -> %s exchange.', my_name(), BYID[a].short, BYID[b].short))
+        end
+        local get = tonumber(w[4]) or 1000
+        get = math.max(1, math.floor(get))
+        return coroutine.schedule(function() exch_run(a, b, get, reply) end, 0)
+    end
+    reply(my_name() .. ': aa trade -- unknown "' .. first .. '" (aa trade help).')
+end
+end   -- v5.49 aa trade
+
 
 N._test = {search = search, route = route, best_for = best_for, opt_how = opt_how, devices_here = devices_here,
            BY_MAP = function() return BY_MAP end, LANDMARKS = function() return LANDMARKS end,

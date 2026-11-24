@@ -1050,6 +1050,7 @@ local HELP = {
     'aa warp | aa 299  (party: a Warp II mage warps everyone, else each uses its Warp Ring)',
     'aa nav <zone or place>  (v5.06: each AA warps there its own fastest way) | aa nav cancel',
     'aa buy <item> [qty] | aa buy list [text] | aa buy scan  (v5.45: Curio Vendor / Green Thumb Moogle)',
+    "aa trade seals | crests (every seal + crest, stored with Shami) | rems (Rem's Tales to Monisette) | trade list | trade swap <from> <to> [n] | trade rate 2|3|auto  (v5.49)",
     'aa reload  (/t: that character, /p: everyone) | aa reload all  (whole party)',
     'aa update [me|force]  (whole party, any zone; "me" = only you -- newest AutoAttack from GitHub, then reload)',
     'aa update previous | aa update 4.88 | aa update list  (go back to an older version on GitHub; [me] = only you)',
@@ -2252,6 +2253,16 @@ handle_command = function(ctx, text)
         else
             reply(ctx, my_name() .. ': aa buy is not loaded (nav.lua missing -- "aa update force").')
         end
+    elseif c == 'trade' then   -- v5.49: nav.lua (seals / crests to Shami, Rem's Tales to Monisette)
+        local words = {}
+        for i = 2, #raw do words[#words + 1] = raw[i] end
+        if aa_trade_command then
+            aa_trade_command(ctx, words, function(t)
+                if ctx.src == 'party' then windower.add_to_chat(207, '[AA] ' .. t) else reply(ctx, t) end
+            end)
+        else
+            reply(ctx, my_name() .. ': aa trade is not loaded (nav.lua missing -- "aa update force").')
+        end
     elseif c == 'pass' then cmd_pool(ctx, false)
     elseif c == 'lot' then cmd_pool(ctx, true)
     elseif c == 'retrust' then cmd_retrust(ctx)
@@ -2289,7 +2300,7 @@ local LOCAL = {invite = true, fight = true, stack = true, follow = true, unfollo
                mount = true, dismount = true, pass = true, status = true, ping = true,
                lot = true, retrust = true, sneak = true, invis = true, invisible = true,
                warp = true, ['299'] = true, reload = true, rl = true, update = true, rollback = true, version = true,
-               nav = true, buy = true}   -- v5.06, v5.45
+               nav = true, buy = true, trade = true}   -- v5.06, v5.45, v5.49
 
 function aa_party_command(command, args)
     -- v4.75: //aa assist / //aa pull typed (not started by aa fight): stay put

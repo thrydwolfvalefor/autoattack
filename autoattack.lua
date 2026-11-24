@@ -36,6 +36,7 @@
         //aa sneak | invis | sneak invis | warp (or 299)
         //aa nav <zone or place> | nav <n> | nav p<n> | nav party <name> | nav cancel   (v5.06, nav.lua)
         //aa buy <item> [qty] | buy list [text] | buy scan   (v5.45: Curio Vendor / Green Thumb Moogle)
+        //aa trade seals | crests | rems | trade list | trade swap <from> <to> [n] | trade rate 2|3|auto   (v5.49)
         //aa status | ping | party | reload [all] | update [all|force|check] | rollback [all]
 
         ("//aa" works directly; "//lua c autoattack <command>" also works.)
@@ -149,7 +150,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.48'
+_addon.version  = '5.50'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -11992,6 +11993,43 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.50 - aa trade seals = aa trade crests: both trade every seal AND crest
+        (Mark, 2026-11-23: "aa trade seals and aa trade crests (with trade
+        both seals and crests)"); beastmen's + Kindred's seals and Kindred's /
+        High / Sacred Kindred's crests in one go.
+        * Mark: "Shami will not accept past 9999, and extra traded will not be
+          lost" -> v5.49's 1-item first trade and the 9999-minus-stored cap
+          are gone; what Shami refuses stays with you and is reported FULL
+          (a refused mixed trade is still retried one kind at a time).
+          Monisette keeps the 255-a-chapter-a-run cap (her behaviour unknown).
+v5.49 - aa trade: seals / crests to Shami, Rem's Tales to Monisette (Mark,
+        2026-11-23: "let's add a new feature 'aa trade [type]'. For this
+        round is focused on trading items to store at stuff npcs").
+        * nav.lua: "aa trade seals" (beastmen's + Kindred's seals) / "aa trade
+          crests" (Kindred's, High and Sacred Kindred's crests) pulls them out
+          of the satchel / sack / case into the inventory, walks to Shami
+          (Port Jeuno H-8, <= 50y; Shemo next to him works too) and trades 8
+          stacks at a time until none are left. "aa trade rem" / "rems" /
+          "rem's": Rem's Tale Ch.1-10 to Monisette (Port Jeuno I-8).
+        * Full: a kind he won't take (9999 seals / crests, 255 Rem's Tales
+          each) stays with you and AA says so (a refused mixed trade is
+          retried one kind at a time to find the full one). Seals / crests:
+          the aa nav style list opens -- what Shami holds (read from his and
+          Shemo's own words: "When taken together...", "Shami's holding a
+          total of...", "That brings your total balance...") + exchanges at
+          Shemo, who swaps STORED seals / crests 3 for 1; the suggestion
+          (gold, highlighted) is 3000 of the full kind for 1000 of the kind
+          you have least of. 2 for 1 during a campaign: AA reads the rate
+          from Shemo ("(Maximum: N)" on his number line, "for N of yours",
+          his "I'll be takin' N" offer) and then lists 2000 -> 1000.
+          "aa trade rate 2|3|auto" sets it by hand.
+        * Clicking an exchange: AA walks to Shemo, opens his menu and says
+          what to pick and the number to enter (his offer and balances are
+          drawn by the game from the menu itself, so with the menu hidden AA
+          couldn't check them before the yes); it reads the result, updates
+          the counts and keeps the menu answers for a later version.
+        * aa trade list | swap <from> <to> [n] (bs, ks, kc, hkc, skc) | stop
+          via aa stop. Per character: data/trade_<name>.lua.
 v5.48 - Myth's ~19s idle engages: native /assist fallback + ENGAGE-STUCK report
         (Mark, 2026-11-23: "review the fights/gsc/ws of shadow and myth since
         the update ... If changes are needed, document, explain, build, and

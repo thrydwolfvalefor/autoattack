@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.48** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.50** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -15,6 +15,7 @@ Current version: **5.48** (see the changelog block at the bottom of `autoattack.
 3. [Quick start](#quick-start)
 4. [Commands](#commands)
 5. [Party commands](#party-commands) (v4.44)
+   - [Storing: aa trade](#storing-aa-trade-v549) (v5.49)
    - [Travel: aa nav](#travel-aa-nav) (v5.06)
 6. [Modes: ASSIST and PULL](#modes-assist-and-pull)
 7. [What the loop does each tick](#what-the-loop-does-each-tick)
@@ -174,6 +175,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | `sneak` / `invis` / `sneak invis` | Every character that doesn't already have the buff puts it up: its own Sneak / Invisible spell (main or sub job, MP and recast checked), else Spectral Jig (DNC main or sub, level 25+, gives both), else Silent Oil / Prism Powder. Sneak always goes first. Then it answers in the same channel it was asked in (`/p` or `/t`) with the time left, e.g. `[AA] Shadowhammer: Sneak 4:05, Invisible 4:50`, or what it couldn't do. Refused while fighting, mounted or resting (v4.51). |
 | `warp` (or `299`) | **In party chat:** everyone stops AutoAttack and following. If anyone in the party can cast Warp II (they say `[AA] <name>: I can Warp II.`), that mage casts Warp II on every other player in the zone, then warps itself; the others wait up to `warp_wait` (90s), then use their ring. With no Warp II mage, every character equips its Warp Ring on the **right ring** (ring2), waits `warp_ring_delay` (11s) and uses it; the ring that was there goes back on after the warp, or right away if the Warp Ring doesn't go off (v4.53). **By /tell or typed:** just that character (its own Warp spell, else the ring). Refused while fighting (v4.52). |
 | `buy <item> [qty]` | Each AA buys it from the Curio Vendor / Green Thumb Moogle next to it (v5.45, see [Shopping: aa buy](#shopping-aa-buy-v545)). |
+| `trade seals` / `crests` / `rems` | Each AA stores its own seals / crests with Shami, or Rem's Tales with Monisette (v5.49, see [Storing: aa trade](#storing-aa-trade-v549)). |
 | `nav <zone or place>` | Every AA that gets it goes there its own fastest way (warp NPC, ring or spell) and answers in party chat; `nav cancel` stops it. See [Travel: aa nav](#travel-aa-nav) (v5.06). |
 | `pass` | Passes every item in the treasure pool. |
 | `lot` | Lots on every item in the treasure pool (v4.45). |
@@ -208,6 +210,25 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | `aa buy <text> [qty]` | one item matches (or the exact name): buys it; several: lists them. Checks gil and free inventory slots first; walks to the moogle if it is within 50 yalms |
 
 Kept per character in `data/shops_<name>.lua`. Works typed, by tell and by party chat (each AA buys for itself).
+
+### Storing: aa trade (v5.49)
+
+Trades everything of one kind from your **inventory, satchel, sack and case** to the Port Jeuno storage NPCs, 8 stacks per trade, until none are left. AA walks you to the NPC if it is within 50 yalms (otherwise `aa nav shami`).
+
+| Command | Does |
+|---|---|
+| `aa trade seals` or `aa trade crests` | every seal **and** crest (beastmen's, Kindred's seals; Kindred's, High and Sacred Kindred's crests) to **Shami** (Port Jeuno H-8; his brother Shemo next to him works too) (v5.50: both do the same) |
+| `aa trade rem` / `rems` / `rem's` | Rem's Tale Ch.1-10 to **Monisette** (Port Jeuno I-8; talk to Sagheera once first) |
+| `aa trade list` | the seals & crests list: what Shami holds (+ what you carry), and exchanges at Shemo if a kind is full |
+| `aa trade swap <from> <to> [n]` | exchange at Shemo by hand-typed kinds: `bs`, `ks`, `kc`, `hkc`, `skc`; `n` = how many you get (default 1000) |
+| `aa trade rate 2` / `3` / `auto` | Shemo's exchange rate (auto = what Shemo last said, else 3) |
+| `aa stop` | stops a trade between rounds |
+
+**Full:** Shami holds 9999 of each seal / crest kind and refuses the rest (nothing is lost), Monisette 255 of each chapter (AA never offers her more than 255 of a chapter in one run). A kind they won't take stays with you and AA tells you (`Shami is FULL on S. Kindred Crest (412 still with you)`). For seals and crests the list opens (same look as `aa nav`): every kind with what Shami holds, and the exchanges at **Shemo**, who swaps stored seals / crests **3 for 1**. The suggestion -- gold and highlighted -- is **3000** of the full kind for **1000** of the kind you have least of. During a seal / crest **campaign** Shemo takes **2 for 1** and the list says **2000 -> 1000**: AA reads the rate from Shemo's own words (the `(Maximum: N)` on his number line, "for N of yours", his "I'll be takin' N ..." offer), good for 3 days; `aa trade rate 2` sets it by hand.
+
+**Exchanging:** click a line and AA walks to Shemo, opens his menu and tells you what to pick (`trade -> S. Kindred Crest -> Beastmen's Seal -> enter 1000 -> yes`). Shemo's offer and balances are drawn by the game from his menu itself, so AA can't check them with the menu hidden -- you confirm, AA reads the result and updates the counts.
+
+AA knows what Shami holds from what he and Shemo say (after a trade, or Shemo's "Shami's holding a total of..."); kept per character in `data/trade_<name>.lua`. Items in your Mog Safe / Storage / Locker aren't traded (AA tells you how many). Works typed, by tell and by party chat (each AA trades its own).
 
 ### Travel: aa nav
 
