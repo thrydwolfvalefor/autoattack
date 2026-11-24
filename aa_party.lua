@@ -67,7 +67,8 @@ local D = {
     follow_range   = 1,      -- yalms: how close aa follow keeps you
     stack_watch    = true,   -- v4.75: aa fight members re-stack on the leader when they drift
     restack_slack  = 1.0,    -- v4.75: yalms past party_range before a re-stack
-    restack_max    = 10,     -- v4.75: farthest a member re-stacks while fighting (farther: between fights)
+    restack_max    = 10,
+    assist_fallback = true,  -- v5.48: fast assist uses the game's /assist <leader> when the target packet misses     -- v4.75: farthest a member re-stacks while fighting (farther: between fights)
     restack_delay  = 2,      -- v4.75: s off the stack before re-stacking
     restack_far_secs = 20,   -- v4.78: farther than restack_max this long while fighting: re-stack anyway (0 = never)
     stack_after_kill = true, -- v5.02: aa fight members stack on the leader after every kill
@@ -2525,6 +2526,27 @@ end
 -- /ra, melee, WS, spell) or a mob acts on anyone in the party, the member
 -- targets that mob and attacks.
 -- ---------------------------------------------------------------------------
+-- v5.48: ENGAGE TRACE per leader's mob (what fast assist tried, and what the
+-- game said). 11-23 21:35-21:47 (v5.47 both sides): Myth stood idle 18.5-19.9s
+-- next to 5 of 11 bats with 0 target give-ups, so the v5.47 cause was not it;
+-- Myth's own log isn't reachable, so the member now reports it (ENGAGE-STUCK).
+local function fe_trace(mob_id)
+    local f = P.fe
+    if not f or f.id ~= mob_id then
+        f = {id = mob_id, t0 = os.clock(), calls = 0, skips = 0, atk = 0, asst = 0, why = '-', msg = nil}
+        P.fe = f
+    end
+    return f
+end
+local function fe_cursor_wait(mob_id, n)
+    local t
+    for _ = 1, n do
+        coroutine.sleep(0.1)
+        t = windower.ffxi.get_mob_by_target('t')
+        if t and t.id == mob_id then return t end
+    end
+    return t
+end
 local function fast_engage(mob_id, why, live)   -- v5.02: live = the leader's live mob
     -- v5.02: a fast engage that never finished doesn't block the next one
     if P.engaging and os.clock() - (P.engaging_at or 0) > 3 then P.engaging = false end
@@ -2534,16 +2556,27 @@ local function fast_engage(mob_id, why, live)   -- v5.02: live = the leader's li
     P.fast_last[mob_id] = os.clock()
     P.engaging, P.engaging_at = true, os.clock()
     coroutine.schedule(function()
+        local f = fe_trace(mob_id)
+        f.calls = f.calls + 1
         local m = windower.ffxi.get_mob_by_id(mob_id)
         if m and m.spawn_type == 16 and m.hpp and m.hpp > 0 and m.valid_target and not engaged() then
             local t = windower.ffxi.get_mob_by_target('t')
             if not t or t.id ~= mob_id then
-                -- v5.02: the leader's live mob skips the post-kill quiet window
-                if set_target then set_target(mob_id, live and true or nil) end
-                for _ = 1, 8 do
-                    coroutine.sleep(0.1)
-                    t = windower.ffxi.get_mob_by_target('t')
-                    if t and t.id == mob_id then break end
+                -- v5.48: the target packet already missed this mob, or /attack on
+                -- went out twice and we're still idle: the game's own /assist
+                -- <leader> (puts the cursor on the leader's target natively)
+                local lead = P.follow
+                if lead and opt('assist_fallback') ~= false and (f.skips >= 1 or f.atk >= 2) then
+                    f.asst = f.asst + 1
+                    send('input /assist ' .. lead)
+                    t = fe_cursor_wait(mob_id, 12)
+                    if not (t and t.id == mob_id) then
+                        f.why = 'assist:' .. (t and t.id and ('on ' .. tostring(t.name)) or 'no cursor')
+                    end
+                elseif set_target then
+                    -- v5.02: the leader's live mob skips the post-kill quiet window
+                    if set_target(mob_id, live and true or nil) == false then f.why = 'set_target refused' end
+                    t = fe_cursor_wait(mob_id, 8)
                 end
             end
             m = windower.ffxi.get_mob_by_id(mob_id)
@@ -2551,10 +2584,18 @@ local function fast_engage(mob_id, why, live)   -- v5.02: live = the leader's li
                 if face then face('f') end
                 coroutine.sleep(0.15)
                 send('input /attack on')
-                say(string.format('FAST-ASSIST >>>> %s (%s).', tostring(m.name), why))
+                f.atk, f.atk_at = f.atk + 1, os.clock()
+                say(string.format('FAST-ASSIST >>>> %s (%s%s).', tostring(m.name), why,
+                    f.asst > 0 and ', via /assist' or ''))
             else
-                dbg('FAST-ASSIST skipped ' .. tostring(mob_id) .. ' (cursor not on it / dead).')
+                f.skips = f.skips + 1
+                if f.why == '-' then
+                    f.why = (t and t.id) and ('cursor on ' .. tostring(t.name)) or 'no cursor'
+                end
+                dbg('FAST-ASSIST skipped ' .. tostring(mob_id) .. ' (' .. f.why .. ').')
             end
+        elseif m and m.hpp and m.hpp > 0 and not m.valid_target then
+            f.why = 'not valid_target'
         end
         P.engaging = false
     end, 0)
@@ -2594,7 +2635,10 @@ local function lead_mob_watch()
     local now = os.clock()
     if now < (P.lead_watch_at or 0) then return end
     P.lead_watch_at = now + 0.25
-    if not P.follow_fight or not aa_running() or aa_get_mode() ~= 'assist' then return end
+    if not P.follow_fight or not aa_running() or aa_get_mode() ~= 'assist' then
+        P.lw_why = not P.follow_fight and 'not aa fight' or (not aa_running() and 'AA off' or 'mode ' .. tostring(aa_get_mode()))
+        return
+    end
     -- v5.02: the leader's own target (engaged), the moment it changes
     local lmem = P.follow and member(P.follow)
     local lmob = lmem and lmem.mob
@@ -2606,14 +2650,87 @@ local function lead_mob_watch()
             P.lead_mob_at = now
         end
     end
-    if not P.lead_mob or now - (P.lead_mob_at or 0) > LEAD_MOB_KEEP then return end
+    if not P.lead_mob or now - (P.lead_mob_at or 0) > LEAD_MOB_KEEP then
+        P.lw_why = P.lead_mob and 'lead mob stale' or 'no lead mob'
+        return
+    end
     local p = me()
     if not p then return end
     local m = windower.ffxi.get_mob_by_id(P.lead_mob)
-    if not lead_mob_ok(m) then P.lead_mob = nil; return end
+    if not lead_mob_ok(m) then
+        P.lw_why = 'lead mob not ok (' .. (not m and 'gone' or (m.claim_id and m.claim_id ~= 0 and 'claim ' .. tostring(m.claim_id) or 'dist/hp')) .. ')'
+        P.lead_mob = nil
+        return
+    end
+    P.lw_why = 'ok'
+
     if p.status == 0 then fast_engage(P.lead_mob, "leader's mob", true)
     elseif p.status == 1 then corpse_switch(P.lead_mob, "leader's mob") end
 end
+
+-- v5.48: ENGAGE-STUCK. aa fight member, idle while the leader has been
+-- engaged on its mob for STUCK_SECS: say what fast assist saw (local log +
+-- one "aa~g e stuck ..." line to the leader, max one per mob / 15s) and
+-- try the game's /assist <leader> right away.
+STUCK_SECS = 6
+local function stuck_watch()
+    local now = os.clock()
+    if now < (P.stuck_at or 0) then return end
+    P.stuck_at = now + 0.5
+    if not P.follow_fight or not P.follow or i_lead() then P.W = nil; return end
+    if not aa_running() or aa_get_mode() ~= 'assist' then P.W = nil; return end
+    local lm = member(P.follow)
+    local lmob = lm and lm.mob
+    if not lmob or lmob.status ~= 1 or (lmob.target_index or 0) == 0 then P.W = nil; return end
+    local W = P.W
+    if not W or W.idx ~= lmob.target_index then
+        W = {idx = lmob.target_index, t0 = now, rep = false}
+        P.W = W
+    end
+    local p = me()
+    if not p or p.status == 1 or W.rep or now - W.t0 < STUCK_SECS then return end
+    if p.vitals and p.vitals.hp == 0 then return end
+    W.rep = true
+    local mob = windower.ffxi.get_mob_by_index(W.idx)
+    if not mob or not mob.id or (mob.hpp or 0) <= 0 then return end
+    local f = (P.fe and P.fe.id == mob.id) and P.fe or nil
+    local t = windower.ffxi.get_mob_by_target('t')
+    local bt = windower.ffxi.get_mob_by_target('bt')
+    local d = mob.distance and math.sqrt(mob.distance) or -1
+    local blk = aa_mob_blocked and aa_mob_blocked(mob.id) or 0
+    local q = math.max(0, (target_quiet_until or 0) - now)
+    local beat = now - (aa_loop_beat or now)
+    -- short form for the party line (110 chars max for the whole line)
+    local short = string.format('%.0fs %.1fy f%d/%d/%d/%d %s|%s|t%s bt%s q%.0f b%.0f L%.0f %s',
+        now - W.t0, d, f and f.calls or 0, f and f.skips or 0, f and f.atk or 0, f and f.asst or 0,
+        f and f.why or '-', tostring(P.lw_why or '-'),
+        (t and t.id == mob.id) and '=' or (t and t.id and 'x' or '0'),
+        (bt and bt.id == mob.id) and '=' or (bt and bt.id and 'x' or '0'),
+        q, blk, beat, (f and f.msg) and f.msg:sub(1, 24) or '')
+    say(string.format('ENGAGE-STUCK: idle %.0fs while %s fights %s (%.1fy, id %s) -- fast assist calls %d, skipped %d, ' ..
+        '/attack on %d, /assist %d, last: %s; lead watch: %s; cursor %s; <bt> %s; quiet %.1fs; blocked %.0fs; main loop %.1fs ago%s. Trying /assist %s.',
+        now - W.t0, P.follow, tostring(mob.name), d, tostring(mob.id), f and f.calls or 0, f and f.skips or 0,
+        f and f.atk or 0, f and f.asst or 0, f and f.why or '-', tostring(P.lw_why or '-'),
+        t and (tostring(t.name) .. ' ' .. tostring(t.id)) or 'none', bt and (tostring(bt.name) .. ' ' .. tostring(bt.id)) or 'none',
+        q, blk, beat, (f and f.msg) and ('; game said "' .. f.msg .. '"') or '', P.follow))
+    if pstat_event then pcall(pstat_event, 'stuck', short) end
+    -- force the native path now
+    local ff = fe_trace(mob.id)
+    if ff.skips < 1 then ff.skips = 1 end
+    P.fast_last[mob.id] = nil
+    P.engaging = false
+    fast_engage(mob.id, 'stuck ' .. math.floor(now - W.t0) .. 's', true)
+end
+-- v5.48: what the game answered to our /attack on (3s after it)
+windower.register_event('incoming text', function(original)
+    local f = P.fe
+    if not f or not f.atk_at or os.clock() - f.atk_at > 3 or type(original) ~= 'string' then return end
+    local low = original:lower()
+    if low:find('cannot attack', 1, true) or low:find('unable to', 1, true) or low:find('out of range', 1, true)
+       or low:find('too far', 1, true) or low:find('cannot see', 1, true) or low:find('you cannot', 1, true) then
+        f.msg = original:gsub('%c', ''):gsub('^%s+', ''):sub(1, 60)
+    end
+end)
 
 -- v5.47: true when mob_id is the leader's mob this aa fight member is joining
 -- (seen within LEAD_MOB_KEEP s). autoattack.lua never blocks it (aa_block_mob /
@@ -2663,6 +2780,7 @@ windower.register_event('prerender', function()
     watch_party()
     stack_watch()   -- v4.75
     lead_mob_watch()   -- v5.00
+    stuck_watch()      -- v5.48
     if P.stack or P.follow or P.running then move_tick() end
     if gsc_watch then pcall(gsc_watch) end   -- v4.90: job / weapon change -> profile
 end)

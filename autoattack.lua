@@ -149,7 +149,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.47'
+_addon.version  = '5.48'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -404,6 +404,12 @@ local function is_cant_target_blocked(mob_id)
         return false
     end
     return true
+end
+-- v5.48: seconds left on a mob's temporary block (0 = not blocked); for ENGAGE-STUCK
+function aa_mob_blocked(mob_id)
+    local e = mob_id and cant_target_ids[mob_id]
+    if type(e) ~= 'number' then return 0 end
+    return math.max(0, e - os.clock())
 end
 -- v5.00: leave a mob alone for secs (scans skip it, set_target refuses it).
 -- Global so the main loop can call it without another upvalue.
@@ -4414,7 +4420,7 @@ PSTAT_SLOW = 5
 PSTAT, REP = nil, nil
 PSTAT_PEER = {}          -- [name] = {t = os.clock(), line = "<version> e.. r.. w.."}
 PSTAT_EV_AT = {}         -- [kind] = os.clock() of the last event sent
-PSTAT_EV_GAP = {death = 30, error = 300, watchdog = 60}
+PSTAT_EV_GAP = {death = 30, error = 300, watchdog = 60, stuck = 15}   -- v5.48: stuck
 pstat_at, pstat_q_at, pstat_ask_at = nil, -100, -100
 function pstat_reset()
     local old = PSTAT
@@ -11986,6 +11992,30 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.48 - Myth's ~19s idle engages: native /assist fallback + ENGAGE-STUCK report
+        (Mark, 2026-11-23: "review the fights/gsc/ws of shadow and myth since
+        the update ... If changes are needed, document, explain, build, and
+        publish").
+        * Review 21:07-21:47 (both v5.47, THF + SAM, Locus Dire Bats): 37 kills
+          (54-60/h), 58-59% of WS closed a skillchain, Darkness 33-36 / 10 min
+          at 17-22k, Fragmentation 1-2 / 10 min (v5.46: 2-3).
+          Myth engaged 30 of 36 bats in 1.8-6.7s, but 5 in 18.5-19.9s, idle
+          1.8-7.2y from the bat, all after 21:35 -- with 0 target give-ups,
+          so v5.47's 20s block was not the cause. Myth's median went 4.1 ->
+          3.8 -> 6.9 -> 9.1s over the four 10-min reports.
+        * aa_party.lua fast_engage(): after the target packet misses the
+          leader's mob once (or /attack on went out twice and we're still
+          idle), the next try sends the game's own "/assist <leader>" and
+          waits up to 1.2s for the cursor, then faces + /attack on. Off with
+          party.assist_fallback = false.
+        * ENGAGE-STUCK (members, aa fight): idle 6s (STUCK_SECS) while the
+          leader is engaged on its mob -> one local line with everything fast
+          assist saw (calls / skips / /attack on / /assist, last reason, lead
+          watch state, cursor, <bt>, quiet window, block, main-loop age, the
+          game's answer to /attack on), one "aa~g e stuck ..." line to the
+          leader (PARTY-EVENT in the leader's log; max one / 15s), and an
+          /assist try right away.
+        * aa_mob_blocked(id) (autoattack.lua): seconds left on a mob's block.
 v5.47 - Myth's 20s engage gaps; GSC look-ahead checks TP (Mark, 2026-11-23:
         "now that I have Rudra's Storm on shadow, please see how myth and I are
         working together" -> "yes please").

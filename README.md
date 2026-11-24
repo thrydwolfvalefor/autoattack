@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.47** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.48** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -647,6 +647,9 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
 * **v5.47:**
   * `aa fight` members never block the leader's mob after a targeting miss (it cost a member about 20s on every other mob in a tight pack); an existing block on it is lifted. Members' `PARTY-STATS` now include `target give-ups N (leader's mob M)`.
   * The group skillchain's look-ahead only counts on a teammate under 1000 TP when their TP gain gets them there in time (same `tp_project` check as v5.04), so a closer isn't spent on a weaker skillchain betting on a WS that won't come (THF: Shark Bite's Fragmentation instead of Rudra's Storm's Darkness).
+* **v5.48:**
+  * `aa fight` members: when the target packet misses the leader's mob (or `/attack on` went out twice and they're still idle), fast assist uses the game's own `/assist <leader>` to get the cursor on it, then attacks. Turn it off with `assist_fallback = false` in `party`.
+  * `ENGAGE-STUCK`: a member still idle 6s after the leader engaged writes one line saying what fast assist tried and saw, sends a short `stuck` event to the leader (shown as `PARTY-EVENT <name>: stuck -- ...` in the leader's log, at most one per 15s) and tries `/assist` right away. Short form: `<idle s> <distance>y f<calls>/<skips>/<attack on>/<assist> <last reason>|<lead watch>|t<cursor> bt<battle target> q<quiet s> b<blocked s> L<main loop s ago> <game message>`; for cursor and battle target `=` means on the mob, `x` on another one, `0` none.
 * **v5.05:** `aa fight` members stack once after each kill instead of following the leader; they switch to a new party leader and stop when the leader leaves. `aa follow` stops when the followed player leaves.
 * **v5.04:** the group skillchain only waits for a teammate under 1000 TP when their TP gain (tracked per player) gets them to 1000 before the chain window closes (`tp_project`).
 * **v5.03:** the leader's engage timing (`ENGAGE-LAG`, `ENGAGE` summary) counts each member's first action on the mob, recorded when it happens.
