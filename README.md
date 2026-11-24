@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.31** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.43** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -202,7 +202,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | Command | Does |
 |---|---|
 | `//aa nav <text>` | the list: **Zones**, **Other matches** (places inside a zone: Auction House, Mog House, Entrance, Adoulin districts, Cavernous Maw ...), then **NPCs** (by name or by what they are -- v5.18: `aa nav mystery` finds the Gobbie Mystery Box NPCs -- with their zone; the warp that lands closest wins). One zone found: every way to it. A zone with no route from where you are is still listed. |
-| left-click a line, or `//aa nav <n>` | go there (v5.31: every line is its own box like the craft window's list; the one under the mouse lights up with white text) |
+| left-click a line, or `//aa nav <n>` | go there (v5.31: every line is its own box like the craft window's list; the one under the mouse lights up with white text. v5.40: `[X] close` on the title line is a red button that lights up when the mouse is on the top line) |
 | right-click a line, or `//aa nav p<n>` | the whole party: says `/p aa nav ...`, every AA goes there its own fastest way and answers in party chat |
 | `//aa nav party <text>` / `/p aa nav <text>` | the whole party (friends only, like every party command). v5.19: with `/p aa nav <text>` you get the list and your pick goes to everyone; the others only go by themselves when the name is clear (one match / exact name). `aa stop` stops nav too. |
 | `//aa nav next` / `prev` | another page of the list (v5.20; also the mouse wheel over the list or clicking `<< prev` / `next >>`) |
@@ -220,6 +220,24 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 **Trips with legs (v5.12):** with no warp in your zone, nav leaves by an NPC (Faurie out of the Chateau) or on foot into the zone next door, then uses the warp there that is nearest to where you arrive, and carries on by itself after each zone change (up to 3 legs).
 
 **Escha / Abyssea entrances (v5.30):** a zone you can only enter through a portal (Reisenjima, Escha, Abyssea) is reached by getting to the portal's zone first -- e.g. `aa nav empor` from San d'Oria: "Dim. Ring (Dem) -> Konschtat Highlands, then talk to Dimensional Portal". After the ring AA heads for the portal (its spot is built in, so it doesn't have to be loaded yet), uses it, and then finds Emporox.
+
+**Walk of Echoes (v5.32):** `aa nav walk of echoes` goes to Xarcabard [S] (Home Point there), then the Veridical Conflux next to it. Without Kupofried's medallion AA buys it there first (1000 gil; it says so if you're short), then goes in. The first time you pick in the conflux's menu yourself (buy, then enter); AA remembers both choices in `data/nav_learned.lua`. The Veridical Conflux inside Walk of Echoes takes you back to Xarcabard [S] (also learned the first time).
+
+**Mog Garden (v5.33):** the Mog Dinghy in Port San d'Oria / Port Bastok / Port Windurst, the Moogle in your Mog House (San d'Oria, Bastok, Windurst, Jeuno, Whitegate, Adoulin) and Dangueubert in Western Adoulin all lead there; the first time you pick Mog Garden in the menu and AA remembers it (a Mog House moogle's choice works in every town). Which way each character takes is `nav.via` in aa_config.lua -- e.g. `via = {['Mog Garden'] = {default = 'Eastern Adoulin / Cunegonde', Scracheebrat = "Southern San d'Oria"}}` (a zone, or `zone / NPC`). Since v5.37 only that way in is used, marked `[your way]`.
+
+**Leaving Mog Garden (v5.35, v5.37):** from Mog Garden aa nav always leaves for Eastern Adoulin -- the Green Thumb Moogle or the Mog Dinghy's Eastern Adoulin choice (its bottom option; v5.38), whichever is closer (`nav.garden_exit`; set it to `''` to also allow the Mog Dinghy to the ports) and carries on from there. No warp ring, item or spell is used to leave it.
+
+**Into Mog Garden (v5.37):** everyone goes through Eastern Adoulin: Home Point #2 or the Survival Guide there, then Cunegonde (`via = {['Mog Garden'] = {default = 'Eastern Adoulin / Cunegonde'}}`). The first time you pick Mog Garden in Cunegonde's menu; AA remembers it.
+
+**Things in the way (v5.34):** when AA walks you to a warp NPC and gets stuck (a box in front of Dangueubert in Western Adoulin), it goes around -- to the right first, a bit wider each time, then to the left. If it still can't get there it asks you to walk; either way the way that worked is kept (`path:<zone>:<NPC>` in `data/nav_learned.lua`) and walked point by point next time.
+
+**Side-step off the spawn (v5.43):** coming out of the Mog House / Mog Garden in Eastern Adoulin there's a post right in front of you; when AA starts a walk there it bears a little to the right for the first 5 yalms.
+
+**Rings on cooldown (v5.33):** AA notes when you use Warp Ring, Dim. Rings, Tavnazian Ring or Instant Warp (by nav, `aa warp` or by hand) and leaves them out until their 10-minute reuse is over. A ring that doesn't go off is marked used and AA tries the next way (Walk of Echoes: the Veridical Conflux back to Xarcabard [S], then its Home Point).
+
+**Home warps last (v5.41):** in a zone with a Home Point or Survival Guide, Warp Ring, Instant Warp and Warp / Warp II never come out on top -- they're listed after the Home Point / Survival Guide ways (locked warps stay at the bottom).
+
+**No warp in your zone (v5.32):** when the zone you're in has no Home Point, Survival Guide or other warp, Warp Ring (or Instant Warp / your Warp spell) to your Home Point is offered, then the Home Point there to where you're going (v5.33: also to places with no Home Point of their own, like Mog Garden -- "Warp Ring -> Port San d'Oria, then talk to Mog Dinghy").
 
 **In-zone warp to the NPC (v5.31):** once in the NPC's zone, a warp inside the zone that lands closer is used first when it is faster than walking -- in Reisenjima the Eschan Portal (#8 for Emporox) -- and then AA finds the NPC.
 

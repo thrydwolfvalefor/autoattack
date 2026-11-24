@@ -148,7 +148,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.31'
+_addon.version  = '5.43'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -11950,6 +11950,140 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.43 - aa nav side-steps the post outside the Eastern Adoulin Mog House / Mog
+        Garden spawn (Mark, 2026-11-23: "side stepping to the right a little as
+        they are walking forward for the 1st 5 yalms would make it smoother").
+        nav.lua START_NUDGES: a walk that starts within 6y of (-56,-136) in
+        Eastern Adoulin (where the Green Thumb Moogle puts you) bears 35 deg
+        right of its goal until it is 5y from where it started, then goes
+        straight. More spots can be added to START_NUDGES.
+v5.42 - v5.41 fix: home warps still came out on top when nav.via added its way
+        (Mark's screenshot, Ru'Lude by Home Point #1 -> "mog garden": Instant
+        Warp -> Eastern Adoulin first). The via block (v5.37) re-sorted the list
+        after v5.41 had moved them down; that step now runs after it. Same case
+        now: Home Point -> Eastern Adoulin #2 then Cunegonde, Survival Guide,
+        Home Point #1, then Instant Warp and Warp Ring.
+v5.41 - aa nav: Warp Ring / Instant Warp / Warp not on top where a Home Point
+        or Survival Guide is (Mark, 2026-11-23: "make sure that Instant Warp or
+        Warp Ring or Warp option are not the top option, when there are HPs or
+        Books that a player can access in that zone"). nav.lua route(): with a
+        Home Point / Survival Guide in this zone the order is usable ways, then
+        those home warps, then locked ways. Zones with neither (Walk of Echoes)
+        keep them on top when fastest. E.g. Ru'Lude Gardens 216y from the Home
+        Point -> Port San d'Oria: Home Point first, Instant Warp 4th.
+v5.40 - aa nav list: [X] close lights up (Mark, 2026-11-23: "lets make sure
+        'close [x]' is highlighted when cursor is at the top row"). nav.lua: the
+        title line's "[X] close" is its own button in the craft GUI's red button
+        style (170,20,20, white text); with the mouse on the top line it turns
+        lighter (+50) with yellow text. Clicking the top line still closes.
+v5.39 - aa nav counts the walk from where a Survival Guide lands (Mark,
+        2026-11-23: "'aa nav delivery crate' should take the user to a HP if
+        close enough, instead of book > hp > rulude gardens ... wouldn't it be
+        simpler to go from Eastern Adoulin HP, to rulude gardens HP#1").
+        * Survival Guides (and other warps) have no landing spot in the warp
+          data, so the walk from them to an NPC counted 0 and they beat Home
+          Points that land much closer. nav.lua land_spot(): the warp data's
+          spot, else where that warp stands (nav_zones spots / seen in game).
+        * Eastern Adoulin (HP #2) -> Delivery Crate (Ru'Lude -12,120): now
+          "Home Point -> Ru'Lude Gardens #1 (+121y walk)" (41s) first; the Survival
+          Guide (+197y) is 4th. In Ru'Lude at HP #1 it just walks.
+v5.38 - Out of Mog Garden also by the Mog Dinghy to Eastern Adoulin (Mark,
+        2026-11-23: "It looks like eastern adoulin is the bottom option from
+        Dinghy"). nav.lua: Mog Dinghy (Mog Garden) -> Eastern Adoulin added (and
+        allowed to be learned); with garden_exit = 'Eastern Adoulin' the closer
+        of the Green Thumb Moogle and the Dinghy is used. First time at the
+        Dinghy: pick Eastern Adoulin (bottom option); AA remembers it.
+v5.37 - Mog Garden always through Eastern Adoulin, for everyone (Mark,
+        2026-11-23: "when exiting the mog garden, lets always choose 'exit to
+        east adoulin' ... when going to mog garden, go to eastern adouline HP 2,
+        or the book, and then talk to Cunegonde. Make that the default in 'aa
+        nav' for all users").
+        * nav.lua: Cunegonde (Eastern Adoulin -56,-130) -> Mog Garden (menu
+          learned the first time).
+        * nav.via['Mog Garden'] = {default = 'Eastern Adoulin / Cunegonde'} (no
+          per-character entries; "<zone> / <NPC>" is new). With a preference only
+          that way in is used: other ways in (Mog Dinghy, Mog Houses, Dangueubert)
+          are left out; warps that land you somewhere first stay (the trip
+          carries on). Your way is added even when another way is right where
+          you stand (Port San d'Oria -> Home Point to Eastern Adoulin #2, then
+          Cunegonde).
+        * nav.garden_exit = 'Eastern Adoulin': out of Mog Garden only by the
+          Green Thumb Moogle ('' = the Mog Dinghy too).
+v5.36 - Shadowhammer goes into Mog Garden through Eastern Adoulin (Mark,
+        2026-11-23: "since eastern adoulin has HP and book close by, I will use
+        that now on for my mog garden entrance"). nav.via['Mog Garden']
+        Shadowhammer = 'Eastern Adoulin' (was Port San d'Oria) in nav.lua's
+        defaults and aa_config_defaults.lua.
+v5.35 - aa nav out of Mog Garden by its own ways (Mark, 2026-11-23: "'aa nav'
+        when player is in mog garden should first be to exit mog garden via
+        dinghy or green thumb moogle, not warping out").
+        * nav.lua: NO_WARP_OUT = Mog Garden: no ring / Instant Warp / Warp spell
+          options from there (v5.32 "Warp Ring home" included).
+        * Mog Dinghy in Mog Garden (-17,-24) -> Port San d'Oria / Port Bastok /
+          Port Windurst as ways out (menu learned the first time; only those
+          three are learned). With the Green Thumb Moogle -> Eastern Adoulin,
+          the fastest of them wins (e.g. Ru'Lude: Green Thumb -> Eastern Adoulin,
+          then Home Point; Port San d'Oria: the Dinghy).
+v5.34 - aa nav walks around things in the way (Mark, 2026-11-23: "there is a
+        BOX obstruction in the way to getting to Dangeuebert, so we need to walk
+        wide to the right instead of straight to the NPC").
+        * nav.lua: walking to a warp NPC, not 1y closer in 1.5s = stuck: turn
+          right 70 deg for 2s, 90 deg 3s, 90 deg 5s, then left (70/90/90 deg,
+          3/5/8s); then "walk there and AA warps (and remembers the way)".
+        * A walk that needed a way around -- by AA or by you -- is saved as a
+          path (points every 4y, data/nav_learned.lua "path:<zone>:<NPC>") and
+          followed point by point next time (from the point nearest to you).
+        * Test (box between Western Adoulin HP #2 and Dangueubert): first walk
+          14s with two right turns, path learned; second walk 9.5s, no stops.
+v5.33 - aa nav: Mog Garden ways + per-character preference, ring cooldowns
+        (Mark, 2026-11-23: "When in walk of echos, and asked 'aa nav mog garden',
+        first I would expect to use warp ring ... vertical conflux back to
+        Xarcabard (S) would be the option if warp ring is on cool down ... my
+        preferred mog garden is Port Sandaria, using the Dingy ... we probably
+        need a config for this, or show all the options").
+        * nav.lua: Mog Dinghy (Port San d'Oria / Bastok / Windurst) and the Mog
+          House Moogle (towns, Jeuno, Whitegate, Adoulin) -> Mog Garden; menus
+          learned the first time, a moogle's choice is tried in every town.
+        * nav.via (aa_config nav block): per character the zone to go through,
+          e.g. Mog Garden: Shadowhammer Port San d'Oria, Mythrandiir Eastern
+          Adoulin, Scracheebrat Southern San d'Oria. Those ways come first,
+          marked [your way]; the rest stay in the list.
+        * Warp Ring home is also offered toward places without a Home Point
+          (Walk of Echoes -> "Warp Ring -> Port San d'Oria, then talk to Mog
+          Dinghy").
+        * Ring / Instant Warp reuse: every use is noted (action packet, also
+          aa warp and by hand; kept in data/nav_<name>.lua "used") and the item
+          is left out until its recast (600s) is over. A ring that didn't go off
+          is marked used and nav tries the next way (Walk of Echoes: conflux).
+        * Warp NPC spots AA has seen are used when the warp data has none
+          (Xarcabard [S] Home Point #1): 11-23 17:30 nav arrived in Xarcabard
+          [S] before the Home Point had loaded and went back to Walk of Echoes.
+          Exits back to the zone you just left aren't offered for 3 minutes.
+        * The Walk of Echoes / Xarcabard [S] Veridical Conflux menu no longer
+          overwrites the Abyssea unlocks (Shadowhammer's abyssea unlocks were
+          cleared once; the next real Abyssea conflux reads them again).
+v5.32 - aa nav: Walk of Echoes via Xarcabard [S], Warp Ring home from a zone
+        with no warp (Mark, 2026-11-23: "go to xarcabard (S), go to the
+        veridical conflux nearby, buy a kupofried medallion for 1000gil, then
+        use the veridical conflux to enter Walk of Echoes"; "if I am in some
+        zone without a book or warp ... use the warp ring to take me back to a
+        HP").
+        * nav.lua: Veridical Conflux Xarcabard [S] (239,-248) -> Walk of Echoes
+          and back (Walk of Echoes (-420,-38) -> Xarcabard [S]) as zone-moving
+          NPCs; menus learned the first time.
+        * Key item to buy (NEED_KI: Kupofried's medallion, id 1599, 1000 gil):
+          without it AA replays the learned buy choice, waits for the key item,
+          talks again and goes in; a buy-and-enter menu of several steps is
+          learned as one sequence (seq). Short on gil: it says so and stops.
+          First time: "buy ..., then pick Walk of Echoes; AA remembers both."
+        * Menus of several steps (update choices, then the final one) are now
+          recorded and replayed (data/nav_learned.lua seq = "menu,opt,unk,auto;...").
+        * A Veridical Conflux outside Abyssea is no longer taken for an Abyssea
+          warp (devices and learning).
+        * No warp NPC in your zone: Warp Ring / Instant Warp / Warp / Warp II to
+          your Home Point, then the Home Point there (when it has a Home Point
+          to the destination), e.g. "Warp Ring -> Ru'Lude Gardens, then Home
+          Point -> Southern San d'Oria".
 v5.31 - aa nav in-zone warp to the NPC, aa stop stops everything, craft-style
         nav rows (Mark, 2026-11-23: "interact with the yellow escha warp point
         and go to point #8, as that is the portal / point where emperox is";

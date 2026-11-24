@@ -1,4 +1,4 @@
--- AutoAttack group skillchain knowledge (master) v5.31 -- built by make_release.py
+-- AutoAttack group skillchain knowledge (master) v5.43 -- built by make_release.py
 -- from: aa_knowledge.lua, aa_learned_Shadowhammer.lua +0 new
 -- [kind][player][weapon skill] = {n = samples, a = average (thousands), t = last update}
 -- ws = WS damage; sc = skillchain damage when this WS closes it, as Light-equivalent
@@ -9,7 +9,7 @@
 -- Shipped by every release; aa update replaces it. Your own learning is in
 -- data/aa_learned_<Character>.lua and is never replaced.
 return {
-version = "5.31",
+version = "5.43",
 ws = {
   ["Mythrandiir"] = {
     ["Raiden Thrust"] = {n = 4, a = 0.060, t = 0},
@@ -28,11 +28,11 @@ ws = {
   ["Shadowhammer"] = {
     ["Evisceration"] = {n = 5430, a = 11.719, t = 1795475571},
     ["Exenterator"] = {n = 947, a = 5.123, t = 1795465310},
-    ["Fell Cleave"] = {n = 16, a = 10.970, t = 1795478190},
-    ["Full Break"] = {n = 19525, a = 3.225, t = 1795477281},
+    ["Fell Cleave"] = {n = 20, a = 10.859, t = 1795479839},
+    ["Full Break"] = {n = 19528, a = 3.384, t = 1795480107},
     ["Shark Bite"] = {n = 661, a = 6.133, t = 1795475587},
     ["Ukko's Fury"] = {n = 38722, a = 13.340, t = 0},
-    ["Upheaval"] = {n = 35540, a = 17.090, t = 0},
+    ["Upheaval"] = {n = 35541, a = 17.429, t = 1795480117},
   },
   ["Vayne"] = {
     ["Cross Reaper"] = {n = 4122, a = 11.480, t = 0},
@@ -127,14 +127,18 @@ wsm = {
     ["Fell Cleave@Caldera Crab"] = {n = 2, a = 11.797, t = 1795477489},
     ["Fell Cleave@Cyanic Crab"] = {n = 2, a = 15.200, t = 1795477327},
     ["Fell Cleave@Damask Crab"] = {n = 1, a = 10.393, t = 1795477354},
+    ["Fell Cleave@Harpimaira"] = {n = 4, a = 10.417, t = 1795479839},
     ["Fell Cleave@Morbid Molasses"] = {n = 6, a = 10.566, t = 1795477908},
     ["Fell Cleave@Myrmeleontide"] = {n = 3, a = 11.457, t = 1795478190},
     ["Full Break@Cyanic Crab"] = {n = 1, a = 6.910, t = 1795477274},
     ["Full Break@Damask Crab"] = {n = 1, a = 6.773, t = 1795477281},
     ["Full Break@Locus Dire Bat"] = {n = 19505, a = 3.100, t = 0},
+    ["Full Break@Natrix"] = {n = 1, a = 8.251, t = 1795480107},
+    ["Full Break@Saltopus"] = {n = 2, a = 5.479, t = 1795480087},
     ["Shark Bite@Locus Dire Bat"] = {n = 661, a = 6.133, t = 1795475587},
     ["Ukko's Fury@Locus Dire Bat"] = {n = 38681, a = 13.340, t = 0},
     ["Upheaval@Locus Dire Bat"] = {n = 35480, a = 17.090, t = 0},
+    ["Upheaval@Natrix"] = {n = 1, a = 37.449, t = 1795480117},
   },
   ["Vayne"] = {
     ["Cross Reaper@Locus Dire Bat"] = {n = 4122, a = 11.480, t = 0},
@@ -230,11 +234,11 @@ used = {
   {"Shadowhammer", "ws", "Scracheebrat", "Savage Blade", 938},
   {"Shadowhammer", "ws", "Shadowhammer", "Evisceration", 3599},
   {"Shadowhammer", "ws", "Shadowhammer", "Exenterator", 476},
-  {"Shadowhammer", "ws", "Shadowhammer", "Fell Cleave", 16},
-  {"Shadowhammer", "ws", "Shadowhammer", "Full Break", 2294},
+  {"Shadowhammer", "ws", "Shadowhammer", "Fell Cleave", 20},
+  {"Shadowhammer", "ws", "Shadowhammer", "Full Break", 2297},
   {"Shadowhammer", "ws", "Shadowhammer", "Shark Bite", 661},
   {"Shadowhammer", "ws", "Shadowhammer", "Ukko's Fury", 4554},
-  {"Shadowhammer", "ws", "Shadowhammer", "Upheaval", 4259},
+  {"Shadowhammer", "ws", "Shadowhammer", "Upheaval", 4260},
   {"Shadowhammer", "ws", "Vayne", "Cross Reaper", 279},
   {"Shadowhammer", "ws", "Vayne", "Freezebite", 3},
   {"Shadowhammer", "ws", "Vayne", "Frostbite", 3},
@@ -259,14 +263,18 @@ used = {
   {"Shadowhammer", "wsm", "Shadowhammer", "Fell Cleave@Caldera Crab", 2},
   {"Shadowhammer", "wsm", "Shadowhammer", "Fell Cleave@Cyanic Crab", 2},
   {"Shadowhammer", "wsm", "Shadowhammer", "Fell Cleave@Damask Crab", 1},
+  {"Shadowhammer", "wsm", "Shadowhammer", "Fell Cleave@Harpimaira", 4},
   {"Shadowhammer", "wsm", "Shadowhammer", "Fell Cleave@Morbid Molasses", 6},
   {"Shadowhammer", "wsm", "Shadowhammer", "Fell Cleave@Myrmeleontide", 3},
   {"Shadowhammer", "wsm", "Shadowhammer", "Full Break@Cyanic Crab", 1},
   {"Shadowhammer", "wsm", "Shadowhammer", "Full Break@Damask Crab", 1},
   {"Shadowhammer", "wsm", "Shadowhammer", "Full Break@Locus Dire Bat", 2292},
+  {"Shadowhammer", "wsm", "Shadowhammer", "Full Break@Natrix", 1},
+  {"Shadowhammer", "wsm", "Shadowhammer", "Full Break@Saltopus", 2},
   {"Shadowhammer", "wsm", "Shadowhammer", "Shark Bite@Locus Dire Bat", 661},
   {"Shadowhammer", "wsm", "Shadowhammer", "Ukko's Fury@Locus Dire Bat", 4554},
   {"Shadowhammer", "wsm", "Shadowhammer", "Upheaval@Locus Dire Bat", 4259},
+  {"Shadowhammer", "wsm", "Shadowhammer", "Upheaval@Natrix", 1},
   {"Shadowhammer", "wsm", "Vayne", "Cross Reaper@Locus Dire Bat", 279},
   {"Shadowhammer", "wsm", "Vayne", "Freezebite@Locus Dire Bat", 3},
   {"Shadowhammer", "wsm", "Vayne", "Frostbite@Locus Dire Bat", 3},

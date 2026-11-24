@@ -1956,6 +1956,14 @@ local nav = {enabled = true,
 	proto_last    = true,   -- Proto-Waypoints always at the bottom of the list
 	gui           = {x = 420, y = 240, font = 'Consolas', size = 10,   -- where the list shows (//aa nav pos x y tries one)
 	                 highlight = {alpha = 190, red = 30, green = 110, blue = 235}},   -- v5.25 (unused since v5.31: craft-style row boxes)
+	-- v5.33: the way into a place: '<zone you go through>' or '<zone> / <NPC>',
+	-- for everyone (default) or per character (Shadowhammer = ...). v5.37: only
+	-- that way in is used (marked [your way]); warps that land you somewhere
+	-- first still count, the trip carries on from there.
+	via           = {['Mog Garden'] = {default = 'Eastern Adoulin / Cunegonde'}},   -- Home Point #2 / Survival Guide, then Cunegonde
+	-- v5.37: leaving Mog Garden always by this way out (Green Thumb Moogle ->
+	-- Eastern Adoulin); '' = the fastest of all its ways out (Mog Dinghy too)
+	garden_exit   = 'Eastern Adoulin',
 }
 
 -- ===========================================================================
