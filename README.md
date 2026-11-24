@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.43** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.44** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -236,6 +236,8 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 **Rings on cooldown (v5.33):** AA notes when you use Warp Ring, Dim. Rings, Tavnazian Ring or Instant Warp (by nav, `aa warp` or by hand) and leaves them out until their 10-minute reuse is over. A ring that doesn't go off is marked used and AA tries the next way (Walk of Echoes: the Veridical Conflux back to Xarcabard [S], then its Home Point).
 
 **Home warps last (v5.41):** in a zone with a Home Point or Survival Guide, Warp Ring, Instant Warp and Warp / Warp II never come out on top -- they're listed after the Home Point / Survival Guide ways (locked warps stay at the bottom).
+
+**Warp Ring before Instant Warp; Walk of Echoes by its conflux (v5.44):** Warp Ring is always listed above Instant Warp (Instant Warp is used when the ring is on its reuse timer or missing). In Walk of Echoes the Veridical Conflux back to Xarcabard [S] (then its Home Point) comes first; rings and Instant Warp are listed after it.
 
 **No warp in your zone (v5.32):** when the zone you're in has no Home Point, Survival Guide or other warp, Warp Ring (or Instant Warp / your Warp spell) to your Home Point is offered, then the Home Point there to where you're going (v5.33: also to places with no Home Point of their own, like Mog Garden -- "Warp Ring -> Port San d'Oria, then talk to Mog Dinghy").
 

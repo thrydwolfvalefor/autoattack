@@ -148,7 +148,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.43'
+_addon.version  = '5.44'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -11950,6 +11950,19 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.44 - aa nav: Warp Ring before Instant Warp, Walk of Echoes by its conflux
+        (Mark, 2026-11-23: "please favor Warp Ring before Instant Warp scroll.
+        Also, in Walk of Echoes, favor Conflux instead of warp").
+        * nav.lua: an Instant Warp row listed above a Warp Ring row (it's
+          faster) moves to just after the last Warp Ring row. With the ring on
+          its reuse timer / not owned, Instant Warp is used as before.
+        * PREFER_EXIT = Walk of Echoes: the Veridical Conflux -> Xarcabard [S]
+          ways (then its Home Point, or "then on from there") are worked out even
+          when a ring would do, and listed first; rings / Instant Warp after.
+        * Examples (test_v544): WoE -> Port San d'Oria: conflux, then Home Point
+          (39s) x3, Warp Ring, Instant Warp; PsoXja -> Port San d'Oria: Warp Ring,
+          Instant Warp; Ru'Lude far from its Home Points: Home Points, Warp Ring,
+          Instant Warp.
 v5.43 - aa nav side-steps the post outside the Eastern Adoulin Mog House / Mog
         Garden spawn (Mark, 2026-11-23: "side stepping to the right a little as
         they are walking forward for the 1st 5 yalms would make it smoother").

@@ -1,4 +1,4 @@
--- AutoAttack group skillchain knowledge (master) v5.43 -- built by make_release.py
+-- AutoAttack group skillchain knowledge (master) v5.44 -- built by make_release.py
 -- from: aa_knowledge.lua, aa_learned_Shadowhammer.lua +0 new
 -- [kind][player][weapon skill] = {n = samples, a = average (thousands), t = last update}
 -- ws = WS damage; sc = skillchain damage when this WS closes it, as Light-equivalent
@@ -9,7 +9,7 @@
 -- Shipped by every release; aa update replaces it. Your own learning is in
 -- data/aa_learned_<Character>.lua and is never replaced.
 return {
-version = "5.43",
+version = "5.44",
 ws = {
   ["Mythrandiir"] = {
     ["Raiden Thrust"] = {n = 4, a = 0.060, t = 0},

@@ -1,5 +1,5 @@
 --[[
-    nav.lua -- AutoAttack travel: aa nav (v5.06; v5.07 NPCs + unreachable zones listed, v5.08 lands closest to the way on, v5.09 walks you to a close warp, v5.10 warps inside your own zone toward the way on, v5.11 zone-moving NPCs, v5.12 trips with legs + finding NPCs, v5.13 warps not loaded yet after zoning, v5.14 checked NPC targeting, v5.15 more ways to target + updates on your own screen, v5.16 walking legs keep the goal, v5.17 hovered line highlighted, v5.18 NPCs found by what they are, v5.19 aa stop stops nav + your own /p line opens the list, v5.20 list pages, v5.21 [X] close, v5.22 learns routes you use by hand + Mog House, v5.23 ways out of Mog Garden, v5.24 Mog Garden always out to Eastern Adoulin, v5.25 stronger row highlight, v5.30 Escha / Abyssea entrances reached by ring or warp first, v5.31 in-zone warp to the NPC (Eschan Portal #8 for Emporox) + craft-style rows + aa stop stops it all, v5.32 Walk of Echoes via Xarcabard [S] + Kupofried's medallion, Warp Ring / Warp home from a zone with no warp, v5.33 Mog Garden ways + nav.via preference, ring cooldowns, warp spots AA has seen, v5.34 walks around things in the way + learns the path, v5.35 Mog Garden: out by the Mog Dinghy / Green Thumb Moogle, never warped out, v5.36 Shadowhammer into Mog Garden via Eastern Adoulin, v5.37 Mog Garden always through Eastern Adoulin: in by Cunegonde, out by the Green Thumb Moogle, v5.38 or the Mog Dinghy's Eastern Adoulin choice, v5.39 the walk from where a Survival Guide lands counts too, v5.40 [X] close is a button that lights up, v5.41 Warp Ring / Instant Warp / Warp never on top when this zone has a Home Point or Survival Guide, v5.42 also with a nav.via way, v5.43 side-step off the Eastern Adoulin Mog House / Mog Garden spawn)
+    nav.lua -- AutoAttack travel: aa nav (v5.06; v5.07 NPCs + unreachable zones listed, v5.08 lands closest to the way on, v5.09 walks you to a close warp, v5.10 warps inside your own zone toward the way on, v5.11 zone-moving NPCs, v5.12 trips with legs + finding NPCs, v5.13 warps not loaded yet after zoning, v5.14 checked NPC targeting, v5.15 more ways to target + updates on your own screen, v5.16 walking legs keep the goal, v5.17 hovered line highlighted, v5.18 NPCs found by what they are, v5.19 aa stop stops nav + your own /p line opens the list, v5.20 list pages, v5.21 [X] close, v5.22 learns routes you use by hand + Mog House, v5.23 ways out of Mog Garden, v5.24 Mog Garden always out to Eastern Adoulin, v5.25 stronger row highlight, v5.30 Escha / Abyssea entrances reached by ring or warp first, v5.31 in-zone warp to the NPC (Eschan Portal #8 for Emporox) + craft-style rows + aa stop stops it all, v5.32 Walk of Echoes via Xarcabard [S] + Kupofried's medallion, Warp Ring / Warp home from a zone with no warp, v5.33 Mog Garden ways + nav.via preference, ring cooldowns, warp spots AA has seen, v5.34 walks around things in the way + learns the path, v5.35 Mog Garden: out by the Mog Dinghy / Green Thumb Moogle, never warped out, v5.36 Shadowhammer into Mog Garden via Eastern Adoulin, v5.37 Mog Garden always through Eastern Adoulin: in by Cunegonde, out by the Green Thumb Moogle, v5.38 or the Mog Dinghy's Eastern Adoulin choice, v5.39 the walk from where a Survival Guide lands counts too, v5.40 [X] close is a button that lights up, v5.41 Warp Ring / Instant Warp / Warp never on top when this zone has a Home Point or Survival Guide, v5.42 also with a nav.via way, v5.43 side-step off the Eastern Adoulin Mog House / Mog Garden spawn, v5.44 Warp Ring before Instant Warp, Walk of Echoes out by the conflux first)
 
     Loaded by autoattack.lua. Finds the fastest way to a zone (or a place in
     a zone, like an Auction House) from where you stand, shows the choices in
@@ -263,6 +263,9 @@ local FIXED_ONLY = {['280:Green Thumb Moogle'] = {[256] = true, [257] = true},  
 -- spell (Mark, 2026-11-23: "'aa nav' when player is in mog garden should first
 -- be to exit mog garden via dinghy or green thumb moogle, not warping out")
 local NO_WARP_OUT = {[280] = true}
+-- v5.44: zones whose own way out comes before any warp (Mark, 2026-11-23: "in
+-- Walk of Echoes, favor Conflux instead of warp") -- warps are still listed
+local PREFER_EXIT = {[182] = true}
 -- v5.37: zone-moving NPCs from zone z, without Mog Garden's ways out other
 -- than nav.garden_exit (Mark, 2026-11-23: "when exiting the mog garden, lets
 -- always choose 'exit to east adoulin'")
@@ -1117,10 +1120,18 @@ local function route(T, lm, devs, tgt)
             end
         end
     end
+    -- v5.44: Walk of Echoes: its conflux even when a warp would do
+    local prefer_exit = PREFER_EXIT[here] and T ~= here
+    local legs_n = 0
+    if prefer_exit and direct then
+        for _, o in ipairs(two_legs(T, here, spd, tgt)) do out[#out + 1] = o; legs_n = legs_n + 1 end
+    elseif prefer_exit then
+        for _, o in ipairs(out) do if o.kind == 'leg' then legs_n = legs_n + 1 end end
+    end
     -- v5.23: still nothing (Mog Garden): leave by its way out, then carry on
     local any = false
     for _, o in ipairs(out) do if is_jump(o) or o.kind == 'walk' or o.kind == 'here' then any = true end end
-    if not any and T ~= here then
+    if (not any or (prefer_exit and legs_n == 0)) and T ~= here then
         -- v5.24: an NPC way out of here (Mog Garden: Green Thumb Moogle ->
         -- Eastern Adoulin), then work out the rest from where it lands
         local inside = in_mog_house()
@@ -1182,6 +1193,35 @@ local function route(T, lm, devs, tgt)
         if #a > 0 then
             for _, o in ipairs(b) do a[#a + 1] = o end
             for _, o in ipairs(c) do a[#a + 1] = o end
+            out = a
+        end
+    end
+    -- v5.44: Walk of Echoes: ways out by its conflux first, warps after
+    if prefer_exit then
+        local a, b = {}, {}
+        for _, o in ipairs(out) do
+            local by_npc = (o.kind == 'npc') or (o.kind == 'leg' and o.first and o.first.kind == 'npc')
+            if by_npc and not o.locked then a[#a + 1] = o else b[#b + 1] = o end
+        end
+        if #a > 0 then for _, o in ipairs(b) do a[#a + 1] = o end; out = a end
+    end
+    -- v5.44: Warp Ring before Instant Warp (Mark: "favor Warp Ring before
+    -- Instant Warp scroll"): an Instant Warp row goes right after the last
+    -- Warp Ring row (when the ring isn't on its reuse timer it is listed)
+    do
+        local last_ring, items = nil, {}
+        for i, o in ipairs(out) do
+            if o.kind == 'ring' and o.home then last_ring = i end
+        end
+        if last_ring then
+            local a, moved = {}, {}
+            for i, o in ipairs(out) do
+                if o.kind == 'item' and o.home and i < last_ring then moved[#moved + 1] = o
+                else
+                    a[#a + 1] = o
+                    if i == last_ring then for _, m in ipairs(moved) do a[#a + 1] = m end end
+                end
+            end
             out = a
         end
     end
