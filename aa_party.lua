@@ -16,6 +16,7 @@
     v4.69: pull / assist / ws / move / ds answer the sender,
     v4.70: aa gsc [on|off|auto] -- group skillchain switch, answers the sender,
     v4.90: aa gsc ? -- every AA re-sends its profile; aa~g lines are hidden,
+    v5.52: aa fight member's corpse switch is verified; engage packet when /attack on didn't take,
     v4.75: stacking watch -- aa fight members re-stack on the leader mid-fight
     (within restack_max), the leader keeps its aa fight spot),
     v5.06: aa nav <zone or place> -- fastest warp there (nav.lua); /p aa nav = every AA
@@ -68,6 +69,8 @@ local D = {
     stack_watch    = true,   -- v4.75: aa fight members re-stack on the leader when they drift
     restack_slack  = 1.0,    -- v4.75: yalms past party_range before a re-stack
     restack_max    = 10,
+    switch_verify  = true,   -- v5.52: aa fight member's switch off a corpse is watched (/attack on if the game drops you)
+    engage_packet  = true,   -- v5.52: /attack on that didn't take -> engage packet once
     assist_fallback = true,  -- v5.48: fast assist uses the game's /assist <leader> when the target packet misses     -- v4.75: farthest a member re-stacks while fighting (farther: between fights)
     restack_delay  = 2,      -- v4.75: s off the stack before re-stacking
     restack_far_secs = 20,   -- v4.78: farther than restack_max this long while fighting: re-stack anyway (0 = never)
@@ -2544,7 +2547,7 @@ end
 local function fe_trace(mob_id)
     local f = P.fe
     if not f or f.id ~= mob_id then
-        f = {id = mob_id, t0 = os.clock(), calls = 0, skips = 0, atk = 0, asst = 0, why = '-', msg = nil}
+        f = {id = mob_id, t0 = os.clock(), calls = 0, skips = 0, atk = 0, asst = 0, pk = 0, why = '-', msg = nil}
         P.fe = f
     end
     return f
@@ -2557,6 +2560,36 @@ local function fe_cursor_wait(mob_id, n)
         if t and t.id == mob_id then return t end
     end
     return t
+end
+-- v5.52: engage by packet (outgoing 0x01A category 0x02 'Engage'), the packet the
+-- client itself sends for /attack on. Used when /attack on with the cursor on
+-- the leader's mob didn't take (11-23 ENGAGE-STUCK: "f4/2/2/2" -- cursor on the
+-- bat, /attack on x2, still idle; the /assist fallback then put the cursor on
+-- the wrong bat).
+local function engage_packet(m)
+    if not m or not m.id or not m.index or opt('engage_packet') == false then return false end
+    if aa_stale_loop and aa_stale_loop() then return false end
+    local ok = pcall(function()
+        local packets = require('packets')
+        packets.inject(packets.new('outgoing', 0x01A, {
+            ['Target']       = m.id,
+            ['Target Index'] = m.index,
+            ['Category']     = 0x02,   -- Engage
+            ['Param']        = 0,
+        }))
+    end)
+    return ok
+end
+-- v5.52: wait up to secs for us to be engaged on mob_id (true) or not
+local function wait_engaged(mob_id, secs)
+    local t0 = os.clock()
+    while os.clock() - t0 < secs do
+        coroutine.sleep(0.1)
+        local p, t = me(), windower.ffxi.get_mob_by_target('t')
+        if p and p.status == 1 and t and t.id == mob_id then return true end
+        if p and p.status ~= 0 and p.status ~= 1 then return false end
+    end
+    return false
 end
 local function fast_engage(mob_id, why, live)   -- v5.02: live = the leader's live mob
     -- v5.02: a fast engage that never finished doesn't block the next one
@@ -2598,6 +2631,19 @@ local function fast_engage(mob_id, why, live)   -- v5.02: live = the leader's li
                 f.atk, f.atk_at = f.atk + 1, os.clock()
                 say(string.format('FAST-ASSIST >>>> %s (%s%s).', tostring(m.name), why,
                     f.asst > 0 and ', via /assist' or ''))
+                -- v5.52: still idle 1.2s after /attack on with the cursor on it ->
+                -- engage packet once (before the /assist fallback moves the cursor)
+                if not wait_engaged(mob_id, 1.2) then
+                    local p2, t2 = me(), windower.ffxi.get_mob_by_target('t')
+                    m = windower.ffxi.get_mob_by_id(mob_id)
+                    if p2 and p2.status == 0 and t2 and t2.id == mob_id and m and (m.hpp or 0) > 0
+                       and f.pk < 2 and engage_packet(m) then
+                        f.pk = f.pk + 1
+                        local took = wait_engaged(mob_id, 1.0)
+                        say(string.format('FAST-ASSIST: /attack on didn\'t take in 1.2s -- engage packet sent (%s).',
+                            took and 'engaged' or 'still idle'))
+                    end
+                end
             else
                 f.skips = f.skips + 1
                 if f.why == '-' then
@@ -2627,9 +2673,60 @@ local function corpse_switch(mob_id, why)
     P.fast_last[mob_id] = now
     local m = windower.ffxi.get_mob_by_id(mob_id)
     if not m or m.spawn_type ~= 16 or not m.valid_target or not m.hpp or m.hpp <= 0 then return end
-    if engaged_switch and engaged_switch(m) then
-        say(string.format('FAST-SWITCH >>>> %s (%s, off the last kill).', tostring(m.name), why))
-    end
+    if not (engaged_switch and engaged_switch(m)) then return end
+    say(string.format('FAST-SWITCH >>>> %s (%s, off the last kill).', tostring(m.name), why))
+    if opt('switch_verify') == false then return end
+    -- v5.52: watch the switch go through, like the leader's hot switch (v5.00:
+    -- most switches "missed" because the game dropped us out of attack with the
+    -- cursor already on the new mob). 11-23 22:33-22:49: Myth engaged on the
+    -- corpse at the kill, idle 4s later, on the next bat 5-7s after Shadow.
+    -- Dropped out with the cursor on it -> /attack on at once; still engaged on
+    -- the corpse after 0.35s -> switch once more; idle with the cursor
+    -- elsewhere -> hand over to fast assist right away.
+    P.engaging, P.engaging_at = true, os.clock()
+    coroutine.schedule(function()
+        local st = {t0 = os.clock()}
+        -- one look, never yields (pcall in Lua 5.1 can't hold a sleep); true = finished
+        local function step()
+            local p, t = me(), windower.ffxi.get_mob_by_target('t')
+            local mm = windower.ffxi.get_mob_by_id(mob_id)
+            if not mm or (mm.hpp or 0) <= 0 then st.why = 'mob gone'; return true end
+            if not p then st.why = 'no player'; return true end
+            local el = os.clock() - st.t0
+            -- on it: keep watching ~1.2s, the game's drop-out comes 0.5-1s after the switch
+            if p.status == 1 and t and t.id == mob_id then st.seen = st.seen or el; return el >= 1.2 end
+            if p.status == 0 and t and t.id == mob_id and not st.attacked then
+                st.attacked = el
+                send('input /attack on')
+            elseif p.status == 0 and (not t or t.id ~= mob_id) and el >= 0.3 then
+                st.why = 'idle, cursor ' .. (t and t.id and ('on ' .. tostring(t.name)) or 'off'); return true
+            elseif p.status == 1 and (not t or t.id ~= mob_id) and not st.resent and el >= 0.35 then
+                st.resent = true
+                engaged_switch(mm)
+            end
+            return false
+        end
+        while true do
+            coroutine.sleep(0.1)
+            local okc, done = pcall(step)
+            if not okc then st.why = 'error: ' .. tostring(done); break end
+            if done then break end
+            if os.clock() - st.t0 >= 1.6 + (st.attacked and 1.2 or 0) then st.why = st.why or 'timed out'; break end
+        end
+        do
+            local p, t = me(), windower.ffxi.get_mob_by_target('t')
+            st.ok = (p and p.status == 1 and t and t.id == mob_id) and true or false
+        end
+        local extra = (st.attacked and string.format(' (dropped out of attack -- /attack on after %.1fs)', st.attacked) or '') ..
+                      (st.resent and ' (switch sent twice)' or '')
+        if st.ok then
+            dbg(string.format('FAST-SWITCH-OK: on %s (watched %.1fs)%s.', tostring(m.name), os.clock() - st.t0, extra))
+        else
+            dbg(string.format('FAST-SWITCH-MISS: %s%s -- fast assist takes over.', tostring(st.why or '?'), extra))
+            P.fast_last[mob_id] = nil   -- fast assist may go at once
+        end
+        P.engaging = false
+    end, 0)
 end
 -- v5.00: the leader's mob is ours to join for LEAD_MOB_KEEP s after the leader acts on it
 LEAD_MOB_KEEP = 20
@@ -2712,16 +2809,16 @@ local function stuck_watch()
     local q = math.max(0, (target_quiet_until or 0) - now)
     local beat = now - (aa_loop_beat or now)
     -- short form for the party line (110 chars max for the whole line)
-    local short = string.format('%.0fs %.1fy f%d/%d/%d/%d %s|%s|t%s bt%s q%.0f b%.0f L%.0f %s',
-        now - W.t0, d, f and f.calls or 0, f and f.skips or 0, f and f.atk or 0, f and f.asst or 0,
+    local short = string.format('%.0fs %.1fy f%d/%d/%d/%d/%d %s|%s|t%s bt%s q%.0f b%.0f L%.0f %s',
+        now - W.t0, d, f and f.calls or 0, f and f.skips or 0, f and f.atk or 0, f and f.asst or 0, f and f.pk or 0,
         f and f.why or '-', tostring(P.lw_why or '-'),
         (t and t.id == mob.id) and '=' or (t and t.id and 'x' or '0'),
         (bt and bt.id == mob.id) and '=' or (bt and bt.id and 'x' or '0'),
         q, blk, beat, (f and f.msg) and f.msg:sub(1, 24) or '')
     say(string.format('ENGAGE-STUCK: idle %.0fs while %s fights %s (%.1fy, id %s) -- fast assist calls %d, skipped %d, ' ..
-        '/attack on %d, /assist %d, last: %s; lead watch: %s; cursor %s; <bt> %s; quiet %.1fs; blocked %.0fs; main loop %.1fs ago%s. Trying /assist %s.',
+        '/attack on %d, /assist %d, engage packet %d, last: %s; lead watch: %s; cursor %s; <bt> %s; quiet %.1fs; blocked %.0fs; main loop %.1fs ago%s. Trying /assist %s.',
         now - W.t0, P.follow, tostring(mob.name), d, tostring(mob.id), f and f.calls or 0, f and f.skips or 0,
-        f and f.atk or 0, f and f.asst or 0, f and f.why or '-', tostring(P.lw_why or '-'),
+        f and f.atk or 0, f and f.asst or 0, f and f.pk or 0, f and f.why or '-', tostring(P.lw_why or '-'),
         t and (tostring(t.name) .. ' ' .. tostring(t.id)) or 'none', bt and (tostring(bt.name) .. ' ' .. tostring(bt.id)) or 'none',
         q, blk, beat, (f and f.msg) and ('; game said "' .. f.msg .. '"') or '', P.follow))
     if pstat_event then pcall(pstat_event, 'stuck', short) end

@@ -1918,6 +1918,8 @@ local party = {enabled = true,
 	stack_kill_min = 0.5,    -- v5.02: yalms off the leader before the after-kill stack runs
 	stack_kill_max = 30,     -- v5.02: farthest a member runs for the after-kill stack
 	stack_on_oor   = true,   -- v5.02: melee out of range while engaged -> stack on the leader
+	switch_verify  = true,   -- v5.52: a member's switch off the last kill is watched (/attack on at once if the game drops you)
+	engage_packet  = true,   -- v5.52: /attack on that didn't take in 1.2s -> engage packet (max 2 per mob)
 	stack_timeout  = 30,     -- s a member runs toward the leader before giving up
 	stack_wait     = 5,      -- s the leader waits for members to stack before the first pull
 	trust_wait     = 120,    -- s after dropping Trusts before the inviting leader calls them again

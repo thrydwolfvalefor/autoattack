@@ -150,7 +150,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.51'
+_addon.version  = '5.52'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -11993,6 +11993,31 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.52 - aa fight members get onto the next mob faster (Mark, 2026-11-23: "please
+        review logs and see if ws/gsc/ EP per hour is working well").
+        Review 22:33-22:49, Shadow THF (leader, v5.49) + Myth SAM GK (v5.48) +
+        Scrach RDM sword (v5.05), King Ranperre's Tomb, synced ML45: 64 kills/h,
+        22.1k EP/h, 111 WS / 10 min, 60% closed a skillchain (Darkness 35 x
+        19.4k), 0 deaths / errors. GSC fine. The time sink is at the kill:
+        Myth was still engaged on the corpse when Shadow hot-switched, idle 4s
+        later and on the next bat 5-7s after Shadow (ENGAGE-LAG 5.0-6.9s every
+        mob; 10.1s average over the day); 4 ENGAGE-STUCK today all "f4/2/2/2"
+        = cursor on the bat, /attack on twice, still idle, then /assist put the
+        cursor on another bat. Shadow's hot-switch hold waits for the party, so
+        his first WS came 6-8s after the kill too.
+        * aa_party.lua corpse_switch(): watched for 1.2-2.8s like the leader's
+          v5.00 hot switch -- dropped out of attack with the cursor on the new
+          mob -> /attack on at once; still engaged on the corpse after 0.35s ->
+          switch again; idle with the cursor elsewhere -> fast assist may go
+          at once (its 1.5-3s same-mob wait is cleared). Log FAST-SWITCH-OK /
+          FAST-SWITCH-MISS (debug). party.switch_verify = false turns it off.
+        * fast_engage(): /attack on with the cursor on the mob, still idle
+          1.2s later -> outgoing 0x01A category 0x02 (Engage), max 2 per mob,
+          before the /assist fallback. party.engage_packet = false turns it
+          off. ENGAGE-STUCK counts it: f<calls>/<skips>/<atk>/<assist>/<pk>.
+        * Tested: Lua 5.1 compile; mock harness (dropped out -> /attack on;
+          switch ignored -> sent twice; /attack on ignored -> packet engages;
+          cursor lost -> hand-over with the same-mob wait cleared).
 v5.51 - aa trade rems: no 255-a-chapter cap any more (Mark, 2026-11-23: "rems
         tales traded over 255 are not lost") -- like Shami, Monisette refuses
         what doesn't fit; the rest stays with you and is reported FULL.
