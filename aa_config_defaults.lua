@@ -215,6 +215,9 @@ local dread_spikes = {enabled = true,
 --                  step, never under window_min
 --   ws_lead        s before the window closes that a WS is still sent
 --   handoff_wait   s the best continuer gets before the next best goes
+--   handoff_learn  v5.53: learn per teammate how long after their turn opens
+--                  their WS lands; their turn = that (80%) - 0.5s, from
+--                  handoff_wait up to handoff_max s (false = fixed turns)
 --   opener_wait    s the best opener gets before the next best opens
 --   max_steps      longest chain before a new one is opened
 --   bank_hpp       no new chain on a mob at or under this HP% (keep TP for the
@@ -301,6 +304,8 @@ local group_skillchain = {enabled = true,
 	tp_band        = 500,    -- v5.00
 	band_min       = 5,      -- v5.00
 	tp_project     = true,   -- v5.04: only wait for a teammate who will reach 1000 TP before the window closes
+	handoff_learn  = true,   -- v5.53: each teammate's turn length learned from when their WS lands
+	handoff_max    = 3.0,    -- v5.53: longest learned turn (s)
 	once_per_mob   = {['Great Axe'] = 'Full Break'},
 	filler_jobs    = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
 	fillers        = {},

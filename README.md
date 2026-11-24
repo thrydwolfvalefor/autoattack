@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.51** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.53** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -674,6 +674,11 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
 * **v5.52:**
   * `aa fight` members watch their switch off the last kill (`FAST-SWITCH`) the way the leader's hot switch does: if the game drops them out of attack with the cursor already on the new mob, `/attack on` goes out at once; still engaged on the corpse after 0.35s, the switch is sent again; idle with the cursor elsewhere, fast assist takes over straight away. Log: `FAST-SWITCH-OK` / `FAST-SWITCH-MISS`. Turn it off with `switch_verify = false` in `party`.
   * Fast assist: `/attack on` with the cursor on the leader's mob that hasn't engaged within 1.2s is followed by the engage packet the client sends for `/attack on` (at most 2 per mob), before the `/assist` fallback moves the cursor. Turn it off with `engage_packet = false` in `party`. The `ENGAGE-STUCK` short form gets a fifth count: `f<calls>/<skips>/<attack on>/<assist>/<engage packets>`.
+* **v5.53:**
+  * Group skillchain turns are learned per teammate: each AA measures how long after a teammate's turn opens their WS lands, and gives them that (80% of the time) minus 0.5s, between `handoff_wait` and `handoff_max` (3.0s), before the next player goes -- continuers and openers. On 11-24, 11.5% of skillchain steps were wiped by a second WS landing 0-3s after them. `handoff_learn = false` goes back to fixed turns.
+  * A teammate who came under half the times the plan waited on them keeps the plain `handoff_wait` (a longer turn would only slow the chain).
+  * Late guard: a player who becomes ready after the next player's turn opened gives that player their full turn first.
+  * `//aa gsc` shows each teammate's learned turn, your send-to-land time and the steps lost to a too-soon WS; debug `GSC-STOMP` lines log each one.
 * **v5.05:** `aa fight` members stack once after each kill instead of following the leader; they switch to a new party leader and stop when the leader leaves. `aa follow` stops when the followed player leaves.
 * **v5.04:** the group skillchain only waits for a teammate under 1000 TP when their TP gain (tracked per player) gets them to 1000 before the chain window closes (`tp_project`).
 * **v5.03:** the leader's engage timing (`ENGAGE-LAG`, `ENGAGE` summary) counts each member's first action on the mob, recorded when it happens.

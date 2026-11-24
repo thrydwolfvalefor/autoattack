@@ -150,7 +150,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.52'
+_addon.version  = '5.53'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -5629,6 +5629,7 @@ GSC_DEF = {
     min_sc = 5.0,   -- v5.28: skip a level-1 skillchain worth less than this (k) unless at tp_cap
     burst = true, nuke_hold = true, tp_band = 500, band_min = 5,   -- v5.00
     tp_project = true,   -- v5.04
+    handoff_learn = true, handoff_max = 3.0,   -- v5.53: learned per-player handoff
     once_per_mob = {['Great Axe'] = 'Full Break'},
     filler_jobs = {'RDM', 'BLM', 'WHM', 'SCH', 'GEO', 'BRD', 'SMN'},
     fillers = {},
@@ -5662,7 +5663,8 @@ GSC_DEF = {
 }
 GSC = {on = nil, chain = nil, jobs = {}, began = {}, pre_done = {}, pre_n = 0, mob = 0, mob_since = 0,
        fired_at = 0, said = {}, ids = {}, ids_at = -10, act_at = -10, act_val = false, act_last = nil,
-       learned = nil, learned_at = -100, expect = nil, noshow = {}}
+       learned = nil, learned_at = -100, expect = nil, noshow = {},
+       lag = {}, rel = {}, my_lead = 0.9, stomps = 0, stomp_by = {}}   -- v5.53
 
 function gsc_cfg(k)
     local c = AA_CFG and AA_CFG.group_skillchain
@@ -5677,6 +5679,78 @@ function gsc_dbg(key, msg)
     if GSC.said[key] == msg then return end
     GSC.said[key] = msg
     debug_msg(msg)
+end
+-- v5.53: LEARNED HANDOFF. Review of 11-24 (THF + SAM + RDM, 731 kills): 454
+-- of 3949 live skillchain steps (11.5%) were wiped by a second WS landing
+-- 0-3s after it (311 of them a level-3 Darkness / Light that Rudra's Storm or
+-- Fudo would have ended for ~19-24k). The next player's turn came 1.5s after
+-- the first one's (handoff_wait), but Myth's WS lands 1-3s after his turn
+-- opens (remote PC + SAM animation) and his "readying" is seen only ~0.5s
+-- before it lands -- so Shadow sent into Myth's WS. Now each AA learns, per
+-- teammate, how long after their turn opens their WS lands (r) and gives
+-- them p80(r) - 0.5s (handoff_wait .. handoff_max) before the next turn.
+GSC_LAG_N = 40
+function gsc_lag_note(name, r)
+    if not name or not r or r < 0 or r > 8 then return end
+    local key = name:lower()
+    local l = GSC.lag[key] or {}
+    l[#l + 1] = r
+    if #l > GSC_LAG_N then table.remove(l, 1) end
+    GSC.lag[key] = l
+end
+-- how often a teammate we waited on (first in line, 1000+ TP) came: decayed
+-- counts. Scrach came 189 of 968 times on 11-24 -- a longer turn for a player
+-- who mostly doesn't come would only slow the chain, so they keep handoff_wait.
+function gsc_rel_note(id, came)
+    local name = gsc_player_name(id)
+    if not name then return end
+    local key = name:lower()
+    local r = GSC.rel[key] or {a = 0, c = 0, n = 0}
+    r.a = r.a * 0.97 + 1
+    r.c = r.c * 0.97 + (came and 1 or 0)
+    r.n = r.n + 1
+    GSC.rel[key] = r
+end
+function gsc_rel(name)
+    local r = name and GSC.rel[name:lower()]
+    if not r or r.n < 10 or r.a <= 0 then return nil end
+    return r.c / r.a
+end
+-- seconds a teammate gets before the next player's turn
+function gsc_gap(m, base)
+    base = base or gsc_num('handoff_wait')
+    if not m or m.me or gsc_cfg('handoff_learn') == false then return base end
+    local rate = gsc_rel(m.name)
+    if rate and rate < 0.5 then return base end
+    local l = GSC.lag[(m.name or ''):lower()]
+    if not l or #l < 8 then return base end
+    local s = {}
+    for i = 1, #l do s[i] = l[i] end
+    table.sort(s)
+    local p80 = s[math.max(1, math.ceil(#s * 0.8))]
+    return math.max(base, math.min(gsc_num('handoff_max'), p80 - 0.5))
+end
+-- turn start for each place in a ranked list (continuers or openers)
+function gsc_slots(list, start, base)
+    local go, at = {}, start
+    for k, cd in ipairs(list) do
+        go[k] = at
+        at = at + gsc_gap(cd.m, base)
+    end
+    return go
+end
+-- v5.53: my turn is here, but I'm late (wasn't ready when it opened). A
+-- teammate ranked after me whose turn has opened may already be sending --
+-- give them their full turn before I go (their "readying" shows ~0.5s before
+-- it lands). nil = go.
+function gsc_late_guard(list, go, k, now, base)
+    for j = k + 1, #list do
+        local cd = list[j]
+        if not cd.m.me and cd.m.tp >= 1000 and go[j] <= now and now < go[j] + gsc_gap(cd.m, base) then
+            return cd.m.name
+        end
+    end
+    return nil
 end
 function gsc_power(ws, who)
     local p = gsc_cfg('power')
@@ -6079,9 +6153,10 @@ function gsc_tick()
             GSC_CLOSE_AT = close_t   -- v5.04: for the teammates' TP projection
             local cands = gsc_continuers(mem, c.props, c.actor)
             GSC_CLOSE_AT = nil
+            local slots = gsc_slots(cands, open_t)   -- v5.53: learned turn lengths
             for k, cd in ipairs(cands) do
                 if cd.m.me then
-                    local go_at = open_t + (k - 1) * gsc_num('handoff_wait')
+                    local go_at = slots[k]
                     -- v4.72: continuing your own WS: always one handoff later (teammates
                     -- see your TP late and may already be going)
                     if c.actor == me.id then go_at = math.max(go_at, open_t + gsc_num('handoff_wait')) end
@@ -6091,8 +6166,13 @@ function gsc_tick()
                     -- 11-19). A melee WS starting in that time holds it (GSC.began).
                     if me.filler then go_at = math.max(go_at, open_t + gsc_num('handoff_wait')) end
                     if ready and now >= go_at then
-                        return gsc_fire(t, cd.ws, string.format('%s >> %s = %s (step %d)',
-                            tostring(c.label), cd.ws, cd.res, (c.step or 1) + 1), true)
+                        local late = gsc_late_guard(cands, slots, k, now)
+                        if late then
+                            gsc_dbg('late', 'GSC: late for my turn -- ' .. late .. "'s turn is open, giving them time first.")
+                            return 'hold'
+                        end
+                        return gsc_fire(t, cd.ws, string.format('%s >> %s = %s (step %d, turn %d)',
+                            tostring(c.label), cd.ws, cd.res, (c.step or 1) + 1, k), true)
                     end
                     if now >= go_at - 1.5 then return 'hold' end
                     return 'wait'
@@ -6169,9 +6249,15 @@ function gsc_tick()
         return 'wait'
     end
     local ops = gsc_openers(mem)
+    local oslots = gsc_slots(ops, idle_since, gsc_num('opener_wait'))   -- v5.53
     for k, op in ipairs(ops) do
         if op.m.me then
-            if now >= idle_since + (k - 1) * gsc_num('opener_wait') then
+            if now >= oslots[k] then
+                local late = gsc_late_guard(ops, oslots, k, now, gsc_num('opener_wait'))
+                if late then
+                    gsc_dbg('late', 'GSC: late for my opener turn -- ' .. late .. "'s turn is open, giving them time first.")
+                    return 'wait'
+                end
                 return gsc_fire(t, op.ws, op.ws .. ' (opener' .. (op.capped and ', TP capped' or
                     ((op.key >= 10) and string.format(', plan value %.0f', op.key) or '')) .. ')')
             end
@@ -6225,11 +6311,34 @@ function gsc_on_action(act)
     if a1.message == 188 then return end   -- missed: no resonance
     local sc = a1.has_add_effect and GSC_SC_MSG[a1.add_effect_message] or nil
     local c = GSC.chain
+    -- v5.53: learn how long after a turn opens each player's WS lands; count
+    -- chain steps wiped by a WS landing too soon after them
+    if cat == 3 and c and c.target == t1.id and c.t then
+        local since = now - c.t
+        local pid = windower.ffxi.get_player()
+        pid = pid and pid.id
+        if act.actor_id == pid then
+            if GSC.fired_at and now - GSC.fired_at < 3 then
+                GSC.my_lead = 0.8 * (GSC.my_lead or 0.9) + 0.2 * (now - GSC.fired_at)
+            end
+        elseif sc and c.actor ~= act.actor_id and #(c.props or {}) > 0 then
+            pcall(gsc_lag_note, gsc_player_name(act.actor_id), since - gsc_num('window_open'))
+        end
+        if not sc and c.actor and c.actor ~= act.actor_id and #(c.props or {}) > 0 and (c.step or 1) > 1
+           and since < 3.0 then
+            local who = gsc_player_name(act.actor_id) or tostring(act.actor_id)
+            GSC.stomps = (GSC.stomps or 0) + 1
+            GSC.stomp_by[who] = (GSC.stomp_by[who] or 0) + 1
+            debug_msg(string.format('GSC-STOMP: %s %s landed %.1fs after %s (step %d) -- that step was lost.',
+                who, name, since, tostring(c.label), c.step or 1))
+        end
+    end
     -- v4.71: no-show learning -- the player we waited on used something else
     GSC.noshow[act.actor_id .. '|' .. name] = nil
     gsc_ns_set(gsc_player_name(act.actor_id), name, false)   -- v4.92: they use it again
     local ex = GSC.expect
     if ex and c and ex.t == c.t then
+        pcall(gsc_rel_note, ex.id, act.actor_id == ex.id)   -- v5.53
         if not (act.actor_id == ex.id and name == ex.ws) then
             local k = ex.id .. '|' .. ex.ws
             GSC.noshow[k] = (GSC.noshow[k] or 0) + 1
@@ -6300,6 +6409,18 @@ function gsc_command(arg)
         windower.add_to_chat(8, string.format('[AutoAttack]  last: %s, %.1fs ago, step %d.', tostring(c.label),
             os.clock() - c.t, c.step or 1))
     end
+    -- v5.53: learned turn lengths and steps lost to a WS landing too soon
+    local parts = {}
+    for _, m in ipairs(mem) do
+        if not m.me then
+            local l = GSC.lag[m.name:lower()]
+            local rate = gsc_rel(m.name)
+            parts[#parts + 1] = string.format('%s %.1fs (%d seen%s)', m.name, gsc_gap(m), l and #l or 0,
+                rate and string.format(', came %d%%', math.floor(rate * 100 + 0.5)) or '')
+        end
+    end
+    windower.add_to_chat(8, string.format('[AutoAttack]  turns: %s; my WS lands %.1fs after sending; steps lost to a too-soon WS: %d.',
+        (#parts > 0) and table.concat(parts, ', ') or '-', GSC.my_lead or 0, GSC.stomps or 0))
 end
 
 
@@ -11993,6 +12114,36 @@ v4.68 - Sender's own reply was lost (Mark, 2026-11-18 02:01: Mythrandiir
         (replies, aa ... relays, "I can Warp II.") goes out at least
         PARTY_GAP (2s) after this character's last party line, typed or
         AA's -- scheduled, not slept (safe inside aa update's pcall).
+v5.53 - Group skillchain: learned turn lengths -- fewer chain steps wiped by a
+        second WS (Mark, 2026-11-24: "How is the DMG and GSC doing for the
+        group today?").
+        Review 00:00-12:45, Shadow THF (Evisceration / Rudra's Storm) + Myth
+        SAM GK + Scrach RDM sword, all v5.52, Locus Dire Bats, King Ranperre's
+        Tomb: 731 kills, 62-72 kills/h (median 59s apart), 22-25k EP/h, SC
+        ~7M/h + WS ~7M/h + MB ~1M/h, 0 errors. Myth ENGAGE-LAG ~5s (was 18-22s
+        before v5.47). Main chain Kasha > Evisceration = Gravitation > Fudo =
+        Darkness (26.5k) > Rudra's Storm = Darkness end (19.3k).
+        Loss found: 454 of 3949 live steps (11.5%) were wiped by another
+        player's WS landing 0-3s after the step (Myth on Shadow 234, Shadow
+        on Myth 113, Scrach/Myth 74, Scrach/Shadow 33); 311 of them were a
+        level-3 Darkness / Light. The next player's turn opened 1.5s after the
+        first one's, but Myth's WS lands 1-3s after his turn opens and his
+        "readying" shows only ~0.5s before it lands.
+        * Each AA learns, per teammate, how long after their turn opens their
+          WS lands (last 40 skillchain steps they closed) and gives them
+          p80 - 0.5s (handoff_wait .. handoff_max 3.0) before the next turn.
+          Used for continuer and opener turns. group_skillchain.handoff_learn
+          = false turns it off (back to fixed handoff_wait / opener_wait).
+        * A teammate who came under half the times we waited on them (Scrach
+          189 of 968) keeps the plain handoff_wait -- a longer turn would only
+          slow the chain.
+        * Late guard: when I become ready after a teammate ranked after me got
+          their turn (and has 1000+ TP), I give them their full turn first
+          ("GSC: late for my turn -- <name>'s turn is open").
+        * Debug "GSC-STOMP: <who> <WS> landed N.Ns after <SC> (step N) -- that
+          step was lost." and //aa gsc shows each teammate's learned turn, my
+          send-to-land time and the count of lost steps.
+        * The "<a> >> <ws> = <sc> (step N)" line also shows my turn number.
 v5.52 - aa fight members get onto the next mob faster (Mark, 2026-11-23: "please
         review logs and see if ws/gsc/ EP per hour is working well").
         Review 22:33-22:49, Shadow THF (leader, v5.49) + Myth SAM GK (v5.48) +
