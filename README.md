@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.53** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.56** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -207,7 +207,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | `aa buy scan` | at a Curio Vendor Moogle: AA opens each of its menus once and remembers what it sells to this character (Rhapsodies unlock different items) |
 | (open a menu by hand) | any menu you open at either moogle is remembered the same way -- the Green Thumb Moogle is learned only like this (its menu also takes you out of the garden) |
 | `aa buy list [text]` | what AA knows, with prices |
-| `aa buy <text> [qty]` | one item matches (or the exact name): buys it; several: lists them. Checks gil and free inventory slots first; walks to the moogle if it is within 50 yalms |
+| `aa buy <text> [qty]` | one item matches (or the exact name): buys it; several: opens a list -- left-click a row to buy it (v5.54). Each word can be the start of a word of the name (`aa buy sar cot 12` = Saruta Cotton). Checks gil and free inventory slots first; walks to the moogle if it is within 50 yalms |
 
 Kept per character in `data/shops_<name>.lua`. Works typed, by tell and by party chat (each AA buys for itself).
 
@@ -679,6 +679,12 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
   * A teammate who came under half the times the plan waited on them keeps the plain `handoff_wait` (a longer turn would only slow the chain).
   * Late guard: a player who becomes ready after the next player's turn opened gives that player their full turn first.
   * `//aa gsc` shows each teammate's learned turn, your send-to-land time and the steps lost to a too-soon WS; debug `GSC-STOMP` lines log each one.
+* **v5.54:**
+  * `aa buy` with several matching items ("saruta" = Saruta Cotton and Saruta Orange) opens a list: left-click a row to buy it. Words match by their start (`sar cot`). Shop slots are read as one byte, so items saved with a wrong slot (e.g. Grain Seeds) can be bought; saved lists are fixed on load.
+* **v5.55:**
+  * `aa trade seals` / `crests` / `rems`: AA presses Enter through Shami's / Monisette's talk after each trade, so you don't click through it (their lines still show, so the counts are still read). `trade_auto_talk = false` in `nav` turns it off.
+  * Fix: AA no longer stops with "Shami's talk is still open" when the talk opens a moment after the trade.
+* **v5.56:** `aa leader <name> sync <name>` (or `aa sync <name> leader <name>`) does both: the current leader sets the Level Sync first (turning an old one off, ~30s), then passes the leader. Before, the sync part was ignored.
 * **v5.05:** `aa fight` members stack once after each kill instead of following the leader; they switch to a new party leader and stop when the leader leaves. `aa follow` stops when the followed player leaves.
 * **v5.04:** the group skillchain only waits for a teammate under 1000 TP when their TP gain (tracked per player) gets them to 1000 before the chain window closes (`tp_project`).
 * **v5.03:** the leader's engage timing (`ENGAGE-LAG`, `ENGAGE` summary) counts each member's first action on the mob, recorded when it happens.

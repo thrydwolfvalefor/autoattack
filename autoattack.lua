@@ -150,7 +150,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.53'
+_addon.version  = '5.56'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -13319,6 +13319,38 @@ v4.69 - Pass-through commands now answer the sender (Mark, 2026-11-18:
           character that sent the /p line (it sees it in its own log).
         * The addon command handler is now the global aa_addon_command
           (still registered as the addon command).
+v5.54 - aa buy picks from a list (Mark, 2026-11-24: "tried to buy saruta
+        cotton, but instead it shows me two prices, 48 gil, and 38 gil, and
+        didn't buy any"). "saruta" matched Saruta Cotton and Saruta Orange,
+        so AA only listed them in chat.
+        * Several matches now also open a list (the aa nav window): left-click
+          a row to buy that item with the asked quantity; [X] closes it.
+        * Each word you type can be the start of a word of the name, in
+          order: "sar cot" = Saruta Cotton, "w tea" = Win. Tea Leaves.
+        * Shop slots are read as one byte: the byte after it is junk, so some
+          items were saved with slots like 1027 (Grain Seeds, really 3) and
+          could not be bought. Saved shop lists are fixed on load.
+v5.55 - aa trade clicks through the NPC's talk (Mark, 2026-11-24: "can we
+        streamline the trading process so we don't have to confirm on our
+        side?"). After each trade AA presses Enter through Shami's /
+        Monisette's lines (one press once a line has been up 0.5s), so the
+        counts they say are still read. nav.trade_auto_talk = false goes
+        back to clicking yourself.
+        * Fix: the talk can open ~1s after the items leave the inventory; AA
+          checked too early and stopped with "Shami's talk is still open"
+          (11-24 15:43:57, 631 crests). It now waits for the talk to start.
+v5.56 - aa leader <name> sync <name> sets the sync too (Mark, 2026-11-24:
+        "'aa leader shadow sync shadow' isn't cancelling current sync and
+        changing it over to shadow"). 16:10 log: Myth (leader) passed the
+        leader to Shadow and ignored "sync shadow" -- aa leader read only the
+        name. "aa sync shadow" alone worked (16:12).
+        * aa leader / aa sync take both parts in either order: aa leader
+          <name> sync <name>, aa sync <name> leader <name>. Only the party
+          leader can set Level Sync, so the current leader changes the sync
+          first (turning an old sync off, ~30s, as aa sync does) and passes
+          the leader after it.
+        * aa leader <yourself> no longer sends /pcmd leader to yourself; with
+          nothing else to do it says you're already the leader.
 ]]
 
 

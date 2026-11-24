@@ -1,5 +1,5 @@
 --[[
-    nav.lua -- AutoAttack travel: aa nav (v5.06; v5.07 NPCs + unreachable zones listed, v5.08 lands closest to the way on, v5.09 walks you to a close warp, v5.10 warps inside your own zone toward the way on, v5.11 zone-moving NPCs, v5.12 trips with legs + finding NPCs, v5.13 warps not loaded yet after zoning, v5.14 checked NPC targeting, v5.15 more ways to target + updates on your own screen, v5.16 walking legs keep the goal, v5.17 hovered line highlighted, v5.18 NPCs found by what they are, v5.19 aa stop stops nav + your own /p line opens the list, v5.20 list pages, v5.21 [X] close, v5.22 learns routes you use by hand + Mog House, v5.23 ways out of Mog Garden, v5.24 Mog Garden always out to Eastern Adoulin, v5.25 stronger row highlight, v5.30 Escha / Abyssea entrances reached by ring or warp first, v5.31 in-zone warp to the NPC (Eschan Portal #8 for Emporox) + craft-style rows + aa stop stops it all, v5.32 Walk of Echoes via Xarcabard [S] + Kupofried's medallion, Warp Ring / Warp home from a zone with no warp, v5.33 Mog Garden ways + nav.via preference, ring cooldowns, warp spots AA has seen, v5.34 walks around things in the way + learns the path, v5.35 Mog Garden: out by the Mog Dinghy / Green Thumb Moogle, never warped out, v5.36 Shadowhammer into Mog Garden via Eastern Adoulin, v5.37 Mog Garden always through Eastern Adoulin: in by Cunegonde, out by the Green Thumb Moogle, v5.38 or the Mog Dinghy's Eastern Adoulin choice, v5.39 the walk from where a Survival Guide lands counts too, v5.40 [X] close is a button that lights up, v5.41 Warp Ring / Instant Warp / Warp never on top when this zone has a Home Point or Survival Guide, v5.42 also with a nav.via way, v5.43 side-step off the Eastern Adoulin Mog House / Mog Garden spawn, v5.44 Warp Ring before Instant Warp, Walk of Echoes out by the conflux first, v5.45 aa buy for the Curio Vendor / Green Thumb Moogles, v5.46 in your Mog House: out the door first, v5.49 aa trade: seals / crests to Shami, Rem's Tales to Monisette, Shemo exchanges, v5.50 aa trade seals / crests both trade every seal and crest, v5.51 no 255 cap for Rem's Tales)
+    nav.lua -- AutoAttack travel: aa nav (v5.06; v5.07 NPCs + unreachable zones listed, v5.08 lands closest to the way on, v5.09 walks you to a close warp, v5.10 warps inside your own zone toward the way on, v5.11 zone-moving NPCs, v5.12 trips with legs + finding NPCs, v5.13 warps not loaded yet after zoning, v5.14 checked NPC targeting, v5.15 more ways to target + updates on your own screen, v5.16 walking legs keep the goal, v5.17 hovered line highlighted, v5.18 NPCs found by what they are, v5.19 aa stop stops nav + your own /p line opens the list, v5.20 list pages, v5.21 [X] close, v5.22 learns routes you use by hand + Mog House, v5.23 ways out of Mog Garden, v5.24 Mog Garden always out to Eastern Adoulin, v5.25 stronger row highlight, v5.30 Escha / Abyssea entrances reached by ring or warp first, v5.31 in-zone warp to the NPC (Eschan Portal #8 for Emporox) + craft-style rows + aa stop stops it all, v5.32 Walk of Echoes via Xarcabard [S] + Kupofried's medallion, Warp Ring / Warp home from a zone with no warp, v5.33 Mog Garden ways + nav.via preference, ring cooldowns, warp spots AA has seen, v5.34 walks around things in the way + learns the path, v5.35 Mog Garden: out by the Mog Dinghy / Green Thumb Moogle, never warped out, v5.36 Shadowhammer into Mog Garden via Eastern Adoulin, v5.37 Mog Garden always through Eastern Adoulin: in by Cunegonde, out by the Green Thumb Moogle, v5.38 or the Mog Dinghy's Eastern Adoulin choice, v5.39 the walk from where a Survival Guide lands counts too, v5.40 [X] close is a button that lights up, v5.41 Warp Ring / Instant Warp / Warp never on top when this zone has a Home Point or Survival Guide, v5.42 also with a nav.via way, v5.43 side-step off the Eastern Adoulin Mog House / Mog Garden spawn, v5.44 Warp Ring before Instant Warp, Walk of Echoes out by the conflux first, v5.45 aa buy for the Curio Vendor / Green Thumb Moogles, v5.46 in your Mog House: out the door first, v5.49 aa trade: seals / crests to Shami, Rem's Tales to Monisette, Shemo exchanges, v5.50 aa trade seals / crests both trade every seal and crest, v5.51 no 255 cap for Rem's Tales, v5.54 aa buy: several matches open a list to click, words match by their start, shop slots read right, v5.55 aa trade clicks through Shami's / Monisette's talk itself)
 
     Loaded by autoattack.lua. Finds the fastest way to a zone (or a place in
     a zone, like an Auction House) from where you stand, shows the choices in
@@ -81,6 +81,9 @@ local D = {
     -- v5.37: leaving Mog Garden: always this way out (Green Thumb Moogle ->
     -- Eastern Adoulin); '' / false = the fastest of all its ways out (Mog Dinghy too)
     garden_exit   = 'Eastern Adoulin',
+    -- v5.55: aa trade: AA presses Enter through Shami's / Monisette's talk after
+    -- each trade (their words still show, so AA still reads the counts); false = you click
+    trade_auto_talk = true,
 }
 local function opt(k)
     local c = AA_CFG and AA_CFG.nav
@@ -2951,6 +2954,15 @@ local function shop_cat()
     if B.char ~= n then
         B.char = n
         B.cat = read_table(shop_file()) or {}
+        -- v5.54: slots learned before v5.54 could carry junk in the high byte
+        -- (Grain Seeds 1027 = slot 3): the shop slot is one byte
+        local fixed = false
+        for _, items in pairs(B.cat) do
+            for _, e in pairs(items) do
+                if type(e) == 'table' and (e.slot or 0) > 255 then e.slot = e.slot % 256; fixed = true end
+            end
+        end
+        if fixed then B.fix_save = true end
     end
     return B.cat
 end
@@ -2981,7 +2993,7 @@ end
 local function parse_shop(data)
     local out = {}
     for p = 9, #data - 11, 12 do
-        local price, item, slot = data:unpack('I', p), data:unpack('H', p + 4), data:unpack('H', p + 6)
+        local price, item, slot = data:unpack('I', p), data:unpack('H', p + 4), data:byte(p + 6)   -- v5.54: slot is one byte (the next is junk)
         if item and item > 0 then out[#out + 1] = {item = item, slot = slot, price = price} end
     end
     return out
@@ -3232,6 +3244,24 @@ function aa_buy_command(ctx, words, reply)
     local listing = (first == 'list')
     if listing then table.remove(w, 1) end
     local q = table.concat(w, ' '):lower():gsub('^%s+', ''):gsub('%s+$', '')
+    if B.fix_save then B.fix_save = nil; shop_save() end   -- v5.54
+    -- v5.54: every word of the text starts a word of the name, in order
+    -- ("sar cot" = Saruta Cotton, "w tea" = Win. Tea Leaves)
+    local qw = {}
+    for x in q:gmatch('%S+') do qw[#qw + 1] = x end
+    local function word_starts(name)
+        if #qw == 0 then return false end
+        local nw = {}
+        for x in name:gmatch("[%w']+") do nw[#nw + 1] = x end
+        local j = 1
+        for _, x in ipairs(qw) do
+            x = x:gsub('[^%w\']', '')
+            while j <= #nw and nw[j]:sub(1, #x) ~= x do j = j + 1 end
+            if j > #nw then return false end
+            j = j + 1
+        end
+        return true
+    end
     -- matches: the moogles here first, then by name
     local here = {}
     for name in pairs(SHOP_NPCS) do if shop_mob({[name] = true}) then here[name] = true end end
@@ -3241,7 +3271,7 @@ function aa_buy_command(ctx, words, reply)
             local it = res.items[id]
             if it then
                 local n, nl = it.en:lower(), (it.enl or ''):lower()
-                if q == '' or n:find(q, 1, true) or nl:find(q, 1, true) then
+                if q == '' or n:find(q, 1, true) or nl:find(q, 1, true) or word_starts(n) or word_starts(nl) then
                     hits[#hits + 1] = {npc = npc, id = id, e = e, name = it.en, exact = (n == q or nl == q), here = here[npc] and true or false}
                 end
             end
@@ -3273,23 +3303,44 @@ function aa_buy_command(ctx, words, reply)
         for _ in pairs(ids) do n = n + 1 end
         if n == 1 then pick = hits[1] end
     end
+    local function go(h)
+        if B.run then return reply(my_name() .. ': a purchase is already running.') end
+        if not h.here and not shop_mob({[h.npc] = true}) then
+            return reply(string.format('%s: %s is sold by the %s -- go there first (aa nav %s).', my_name(), h.name, h.npc,
+                h.npc == 'Green Thumb Moogle' and 'mog garden' or 'port san d\'oria'))
+        end
+        coroutine.schedule(function() buy_run(ctx, h.npc, h.id, qty, reply) end, 0)
+    end
     if not pick then
-        reply(my_name() .. ': "' .. q .. '" matches:')
-        local shown = {}
+        -- v5.54 (Mark, 2026-11-24: "aa buy saruta 1" showed Saruta Cotton 48 gil
+        -- and Saruta Orange 38 gil and bought nothing): several items match --
+        -- a list to click (left-click buys that one), plus the lines in chat
+        reply(my_name() .. ': "' .. q .. '" matches ' .. 'several items -- click one in the list (or type more of the name):')
+        local shown, rows = {}, {}
+        rows.title = string.format(' AA buy "%s"  x%d   left-click: buy   [X] close ', q, qty)
         for _, h in ipairs(hits) do
             if not shown[h.id] then
                 shown[h.id] = true
-                reply(string.format('  aa buy %s %d  -- %d gil each (%s)', h.name:lower(), qty, h.e.price or 0, h.npc))
-                if #shown >= 8 then break end
+                local n = 0
+                for _ in pairs(shown) do n = n + 1 end
+                if n <= 8 then
+                    reply(string.format('  aa buy %s %d  -- %d gil each (%s)', h.name:lower(), qty, h.e.price or 0, h.npc))
+                end
+                if n <= 40 then
+                    local hh = h
+                    rows[#rows + 1] = {
+                        text = string.format('  %-24s %8s gil  x%-3d %9s gil   %s%s ', h.name, tostring(h.e.price or 0), qty,
+                            tostring((h.e.price or 0) * qty), h.npc, h.here and '' or '  (not here)'),
+                        trade = function() go(hh) end,
+                    }
+                end
             end
         end
+        gui_show('buy', rows)
+        N.gui_party = false
         return
     end
-    if not pick.here then
-        return reply(string.format('%s: %s is sold by the %s -- go there first (aa nav %s).', my_name(), pick.name, pick.npc,
-            pick.npc == 'Green Thumb Moogle' and 'mog garden' or 'port san d\'oria'))
-    end
-    coroutine.schedule(function() buy_run(ctx, pick.npc, pick.id, qty, reply) end, 0)
+    go(pick)
 end
 
 -- ===========================================================================
@@ -3610,14 +3661,29 @@ local function store_run(kind, reply)
             return false
         end, 6)
         -- 3. let the NPC finish talking
+        -- v5.55 (Mark, 2026-11-24: "can we streamline the trading process so we
+        -- don't have to confirm on our side?"): the talk can open ~1s after the
+        -- items leave (11-24 15:43:57 AA gave up before it started) -- wait for
+        -- it, then press Enter through it: one press once a line has been up
+        -- 0.5s (the words still show, so Shami's counts are still read)
+        wait_for(function() return in_event() end, took and 3 or 1.5)
         local t1 = os.clock()
+        local auto = opt('trade_auto_talk') ~= false
+        local presses, last_press = 0, 0
         while in_event() and os.clock() - t1 < 30 do
-            if not notified and os.clock() - t1 > 8 then
+            if T.stop then break end
+            local nowc = os.clock()
+            if auto and presses < 25 and nowc - math.max(r.heard or 0, t1) > 0.5 and nowc - last_press > 0.7 then
+                presses, last_press = presses + 1, nowc
+                windower.send_command('setkey enter down; wait 0.1; setkey enter up')
+            end
+            if not notified and nowc - t1 > (auto and 20 or 8) then
                 notified = true
                 reply(my_name() .. ': click through ' .. mob.name .. '\'s talk -- AA carries on after it.')
             end
-            coroutine.sleep(0.25)
+            coroutine.sleep(0.1)
         end
+        if presses > 0 then dbg(string.format('trade: pressed Enter %d time(s) through %s\'s talk (%.1fs)', presses, mob.name, os.clock() - t1)) end
         coroutine.sleep(0.8)
         local now = carried(K.ids, {0})
         local refused = {}

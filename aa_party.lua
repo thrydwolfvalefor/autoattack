@@ -17,6 +17,7 @@
     v4.70: aa gsc [on|off|auto] -- group skillchain switch, answers the sender,
     v4.90: aa gsc ? -- every AA re-sends its profile; aa~g lines are hidden,
     v5.52: aa fight member's corpse switch is verified; engage packet when /attack on didn't take,
+    v5.56: aa leader <name> sync <name> (either order): sync first, then the leader is passed,
     v4.75: stacking watch -- aa fight members re-stack on the leader mid-fight
     (within restack_max), the leader keeps its aa fight spot),
     v5.06: aa nav <zone or place> -- fastest warp there (nav.lua); /p aa nav = every AA
@@ -2200,18 +2201,43 @@ handle_command = function(ctx, text)
         end
     elseif c == 'disband' then cmd_disband(ctx, false)
     elseif c == 'leave' then cmd_disband(ctx, true)
-    elseif c == 'leader' or c == 'lead' then
-        local who = resolve(w[2], ctx.sender)
-        if not who then return reply(ctx, 'Use: aa leader <name>') end
-        if not need_lead(ctx) then return end
-        if not member(who) then return reply(ctx, who .. ' is not in the party.') end
-        send('input /pcmd leader ' .. who)
-    elseif c == 'sync' then
-        local who = resolve(w[2], ctx.sender)
-        if not who then return reply(ctx, 'Use: aa sync <name>') end
-        if not need_lead(ctx) then return end
-        if not member(who) then return reply(ctx, who .. ' is not in the party.') end
-        coroutine.schedule(function() set_level_sync(ctx, who) end, 0)   -- v5.26
+    elseif c == 'leader' or c == 'lead' or c == 'sync' then
+        -- v5.56: "aa leader <name> sync <name>" / "aa sync <name> leader <name>"
+        -- (Mark, 11-24: "aa leader shadow sync shadow" only moved the leader --
+        -- the sync words were ignored). Only the leader can set Level Sync, so
+        -- the sync goes first, then the leader is passed.
+        local use = 'Use: aa leader <name> [sync <name>] / aa sync <name> [leader <name>]'
+        if not need_lead(ctx) then return end   -- only the leader parses / answers
+        local lead, sync
+        local i = 1
+        while w[i] do
+            local k = w[i]
+            if k == 'leader' or k == 'lead' or k == 'sync' then
+                local who = resolve(w[i + 1], ctx.sender)
+                if not who then return reply(ctx, w[i + 1] and ('"' .. w[i + 1] .. '" after ' .. k .. ' is not on my friend list.') or use) end
+                if k == 'sync' then sync = who else lead = who end
+                i = i + 2
+            else
+                return reply(ctx, 'Unknown word "' .. k .. '". ' .. use)
+            end
+        end
+        for _, who in ipairs({lead or false, sync or false}) do
+            if who and not member(who) then return reply(ctx, who .. ' is not in the party.') end
+        end
+        local pass = lead and lead:lower() ~= my_name():lower()
+        if lead and not pass and not sync then return reply(ctx, my_name() .. ' is already the party leader.') end
+        if sync then
+            coroutine.schedule(function()   -- v5.26
+                local ok = set_level_sync(ctx, sync)
+                if pass then
+                    if not ok then reply(ctx, 'Level Sync not set -- still passing leader to ' .. lead .. '.') end
+                    coroutine.sleep(1)
+                    send('input /pcmd leader ' .. lead)
+                end
+            end, 0)
+        elseif pass then
+            send('input /pcmd leader ' .. lead)
+        end
     elseif c == 'unsync' then
         if not need_lead(ctx) then return end
         coroutine.schedule(function()   -- v5.27: designee's name, see sync_off_request
