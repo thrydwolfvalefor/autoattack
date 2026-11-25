@@ -150,7 +150,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.57'
+_addon.version  = '5.58'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -5746,7 +5746,9 @@ end
 function gsc_late_guard(list, go, k, now, base)
     for j = k + 1, #list do
         local cd = list[j]
-        if not cd.m.me and cd.m.tp >= 1000 and go[j] <= now and now < go[j] + gsc_gap(cd.m, base) then
+        -- v5.58: their turn counts from 1s before it opens here -- each PC times
+        -- the turns from when it saw the last WS land (11-25: 0.1s races)
+        if not cd.m.me and cd.m.tp >= 1000 and go[j] - 1.0 <= now and now < go[j] + gsc_gap(cd.m, base) then
             return cd.m.name
         end
     end
@@ -6154,6 +6156,23 @@ function gsc_tick()
             local cands = gsc_continuers(mem, c.props, c.actor)
             GSC_CLOSE_AT = nil
             local slots = gsc_slots(cands, open_t)   -- v5.53: learned turn lengths
+            -- v5.58: PROMISED TURN. 11-25 overnight (v5.57 Shadow + Myth): 12-17% of
+            -- live steps still wiped. Typical: Myth continues his own Fudo and is
+            -- first in line ("Mythrandiir continues ... -- holding"); a few seconds
+            -- later Shadow's TP passes 750, Shadow outranks him (the last actor
+            -- goes last) and fires as turn 1 at once -- while Myth, who sees
+            -- Shadow's TP late, is already sending. The first teammate in line with
+            -- 1000+ TP keeps that turn for this step: anyone who outranks them
+            -- later waits out their turn (their start, +handoff when continuing
+            -- their own WS, + their learned turn). Not for a teammate who comes
+            -- under half the time (gsc_rel).
+            local c1 = cands[1]
+            if c1 and not c1.m.me and c1.m.tp >= 1000 and not c.promise
+               and not ((gsc_rel(c1.m.name) or 1) < 0.5) then
+                local own = (c.actor == c1.m.id) and gsc_num('handoff_wait') or 0
+                c.promise = {name = c1.m.name, id = c1.m.id,
+                             untl = slots[1] + own + gsc_gap(c1.m) + (own > 0 and 0.5 or 0)}
+            end
             for k, cd in ipairs(cands) do
                 if cd.m.me then
                     local go_at = slots[k]
@@ -6165,6 +6184,12 @@ function gsc_tick()
                     -- same resonance within 3s was the top chain-breaker (64 of 133 on
                     -- 11-19). A melee WS starting in that time holds it (GSC.began).
                     if me.filler then go_at = math.max(go_at, open_t + gsc_num('handoff_wait')) end
+                    local pr = c.promise
+                    if ready and now >= go_at and pr and pr.id ~= me.id and now < pr.untl then
+                        gsc_dbg('promise', 'GSC: ' .. pr.name .. ' was first in line for this step -- giving them ' ..
+                                string.format('%.1fs more.', pr.untl - now))
+                        return 'hold'
+                    end
                     if ready and now >= go_at then
                         local late = gsc_late_guard(cands, slots, k, now)
                         if late then
@@ -13365,6 +13390,31 @@ v5.57 - Waiting for a fight to end: 3 minutes, with progress replies (Mark,
           3:00." then "Still fighting: Locus Dire Bat at 18% HP -- ...; gives
           up in 2:30." The mob is your own target when engaged, else the
           first mob on the party. finish_progress = 0 turns the replies off.
+v5.58 - Group skillchain: a promised turn stays promised (Mark, 2026-11-25:
+        "Please review AA/GSC work overnight to see if it need any changes to
+        maximize EP/hr").
+        Review 11-24 17:00 - 11-25 08:30 (Shadow THF, Myth SAM, Scrach RDM,
+        Locus Dire Bats, ML45/49): 65-68 kills/h with all three (median gap
+        52-56s, was 59s), 24-25.5k EP/h, ~375 EP/kill. Between kills only ~3s
+        (first WS ~5s); time to kill ~51s. The master chain breaks every
+        20-25 kills: the gap it allows shrinks with the chain number (#18-19
+        broke above ~90s, #20 ~75s, #21 ~61s, #22 ~48-58s, #23-24 ~44-50s)
+        -- EP per kill #0 ~320 -> #20+ ~440. Holding it past #22 needs kills
+        under ~45s, about 10% faster than the party kills now.
+        GSC: steps wiped by a WS landing too soon still 12-17% per hour
+        (GSC-STOMP). Shadow's own turn collisions fell to ~5/h (v5.53); most
+        now are two players each thinking they are first: one was first in
+        line, the other's TP passed 750 a few seconds later, outranked them
+        and fired at once while they were already sending (Myth on Shadow's
+        Darkness 76, Fragmentation 52).
+        * The first teammate in line (1000+ TP) for a step keeps that turn:
+          a player who outranks them later waits out their turn ("GSC: <name>
+          was first in line for this step -- giving them N.Ns more"). Their
+          turn = their start (+handoff_wait when continuing their own WS,
+          +0.5s) + their learned turn. Not for a teammate who comes under
+          half the time.
+        * Late guard: a later player's turn counts from 1s before it opens
+          (each PC times turns from when it saw the last WS land).
 ]]
 
 
