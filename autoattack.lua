@@ -150,7 +150,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.58'
+_addon.version  = '5.59'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -13415,6 +13415,27 @@ v5.58 - Group skillchain: a promised turn stays promised (Mark, 2026-11-25:
           half the time.
         * Late guard: a later player's turn counts from 1s before it opens
           (each PC times turns from when it saw the last WS land).
+v5.59 - Fight-wait replies reach the sender whole, and the invite no longer
+        cancels itself (Mark, 2026-11-25: "is AA sending status updates after
+        it gets a command that it has to wait for the fight to finish? ... I
+        am not seeing me sending outgoing /tell to Vayne").
+        Log 16:09-16:11 (Vayne: aa invite me sync Vayne leader shadow fight):
+        the start line and both 30s updates were sent ("Still fighting: Locus
+        Dire Bat at 58% HP" / "11% HP"), but every one was cut at the ';'
+        before "gives up in ..." -- Windower ends a command at ';'. When the
+        fight ended (16:10:53) the invite sent its own "aa stop" to end the
+        fight loop, and the v5.31 "//aa stop stops everything" cancelled the
+        invite itself ("STOP: invite Vayne, fighting stopped."); Vayne had to
+        send it again at 16:12:39. The start line said "a mob": engaged, but
+        no target on the cursor right then.
+        * aa_party.lua stop_fight_only(): AA's own "aa stop" (invite, retrust,
+          rest, warp, mount, aa~ join, trusts) ends only the fight loop; the
+          sequence that sent it carries on. Typed / told "aa stop" still
+          stops everything.
+        * Every tell / party line from AA has ';' turned into ','.
+        * Progress lines: "Still fighting: Locus Dire Bat at 58% HP. Inviting
+          Vayne when it's over, gives up in 2:30." The mob falls back to the
+          lowest-HP mob on the party when nothing is on the cursor.
 ]]
 
 

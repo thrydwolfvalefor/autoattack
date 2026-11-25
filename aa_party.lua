@@ -19,6 +19,7 @@
     v5.52: aa fight member's corpse switch is verified; engage packet when /attack on didn't take,
     v5.56: aa leader <name> sync <name> (either order): sync first, then the leader is passed,
     v5.57: waiting for a fight to end (invite / retrust): 3 min, sender gets mob HP% every 30s,
+    v5.59: AA's own aa stop no longer cancels the invite / retrust that sent it; no ';' in chat,
     v4.75: stacking watch -- aa fight members re-stack on the leader mid-fight
     (within restack_max), the leader keeps its aa fight spot),
     v5.06: aa nav <zone or place> -- fastest warp there (nav.lua); /p aa nav = every AA
@@ -126,6 +127,18 @@ local function zone_id() local i = windower.ffxi.get_info(); return i and i.zone
 local function say(msg) info_msg('PARTY: ' .. msg) end
 local function dbg(msg) if aa_dbg then aa_dbg('PARTY: ' .. msg) end end
 local function send(str) if aa_send then aa_send(str) else windower.send_command(str) end end
+-- v5.59: AA's own "aa stop" (to end the fight loop before an invite, retrust,
+-- rest, warp ...) stops only the fight. Since v5.31 every //aa stop also
+-- stopped the running party sequence, so an invite that waited for the fight
+-- cancelled itself the moment the fight ended (11-25 16:10:53, Vayne's invite:
+-- "STOP: invite Vayne, fighting stopped.").
+local function stop_fight_only()
+    P.own_stop = os.clock()
+    send('aa stop')
+end
+-- v5.59: Windower splits a command at ';' -- "; gives up in 3:00." was cut off
+-- every progress tell. Chat text never carries one.
+local function chat_safe(text) return (tostring(text):gsub(';', ',')) end
 
 local function is_friend(name)
     return name and friend_map()[name:lower()] ~= nil
@@ -237,7 +250,7 @@ end
 -- ---------------------------------------------------------------------------
 -- talking
 -- ---------------------------------------------------------------------------
-local function tell(name, text) send('input /tell ' .. name .. ' ' .. text) end
+local function tell(name, text) send('input /tell ' .. name .. ' ' .. chat_safe(text)) end
 
 -- v4.68: party chat lines from this character go out at least PARTY_GAP s
 -- apart. Mythrandiir's own "aa version" (02:01:12) ran and its reply was sent
@@ -248,6 +261,7 @@ local function tell(name, text) send('input /tell ' .. name .. ' ' .. text) end
 local PARTY_GAP = 2
 P.party_last = P.party_last or -99
 local function party_say(line)
+    line = chat_safe(line)   -- v5.59
     local now = os.clock()
     local wait = P.party_last + PARTY_GAP - now
     if wait > 0 then
@@ -501,7 +515,18 @@ local function fight_mob()
         if t and t.spawn_type == 16 and (t.hpp or 0) > 0 then return t end
     end
     local _, m = party_fighting()
-    return m
+    if m then return m end
+    -- v5.59: engaged with no target on the cursor (just switched): any live mob
+    -- on the party, the lowest HP first (11-25 16:09:44 said "a mob")
+    local mobs = windower.ffxi.get_mob_array()
+    if not mobs or not hs_party_sets or not hs_is_hot or not p then return nil end
+    local ids, idx = hs_party_sets(p)
+    local best
+    for _, x in pairs(mobs) do
+        if type(x) == 'table' and x.spawn_type == 16 and x.hpp and x.hpp > 0 and x.valid_target
+           and hs_is_hot(x, ids, idx) and (not best or x.hpp < best.hpp) then best = x end
+    end
+    return best
 end
 local function mmss(s)
     s = math.max(0, math.floor(s + 0.5))
@@ -527,9 +552,10 @@ local function finish_fights(g, timeout, ctx, what)
             local m = fight_mob()
             local mob = m and string.format('%s at %d%% HP', m.name or 'mob', m.hpp or 0) or 'a mob'
             local first = next_at == t0
-            reply(ctx, string.format('%s %s -- %s when it\'s over; gives up in %s.',
+            local w = what or 'going on'
+            reply(ctx, string.format('%s %s. %s when it\'s over, gives up in %s.',
                 first and 'Finishing the current fight first (no new pulls):' or 'Still fighting:',
-                mob, what or 'going on', mmss(timeout - (now - t0))))
+                mob, w:sub(1, 1):upper() .. w:sub(2), mmss(timeout - (now - t0))))
             next_at = (first and now or next_at) + every
         end
         if not sleep(g, 1) then return false end
@@ -962,7 +988,7 @@ local function run_invite(g, ctx, inv, sync, lead, fight)
             if alive(g) and was_running and aa_running() then aa_set_mode(was_mode) end
             return fail(g, ctx, 'Still fighting after ' .. opt('finish_timeout') .. 's -- invite cancelled.')
         end
-        if aa_running() then send('aa stop') end
+        if aa_running() then stop_fight_only() end
         P.follow_fight = false
         if not sleep(g, 1.5) then return end
     end
@@ -1165,7 +1191,7 @@ local function cmd_disband(ctx, leave_only)
         return reply(ctx, my_name() .. " is fighting -- can't " .. what .. ' right now.')
     end
     P.follow_fight = false
-    if aa_running() then send('aa stop') end
+    if aa_running() then stop_fight_only() end
 
     local dropped = false
     if i_lead() and trust_count() > 0 then
@@ -1230,7 +1256,7 @@ local function cmd_rest(ctx)
     if engaged() or party_fighting() then return reply(ctx, my_name() .. " is fighting -- can't rest.") end
     P.follow, P.follow_fight = nil, false
     run_stop()
-    if aa_running() then send('aa stop') end
+    if aa_running() then stop_fight_only() end
     coroutine.sleep(1)
     send('input /heal on')
     say('resting until HP/MP are full.')
@@ -1304,7 +1330,7 @@ local function cmd_retrust(ctx)
             if alive(g) and was_running and aa_running() then aa_set_mode(was_mode) end
             return fail(g, ctx, 'Still fighting after ' .. opt('finish_timeout') .. 's -- retrust cancelled.')
         end
-        if aa_running() then send('aa stop') end
+        if aa_running() then stop_fight_only() end
         if not sleep(g, 1.5) then return end
     end
     local dropped_at = nil
@@ -1668,7 +1694,7 @@ local function cmd_warp(ctx)
     local wg, zone0 = P.warp_gen, zone_id()
     P.follow, P.follow_fight, P.stack = nil, false, nil
     run_stop()
-    if aa_running() then send('aa stop') end
+    if aa_running() then stop_fight_only() end
     if p.status == 85 or p.status == 5 then send('input /dismount'); coroutine.sleep(1.5) end
     if ctx.src ~= 'party' or not has_players() then
         -- just me: my own Warp spell, else my ring
@@ -1733,7 +1759,7 @@ local function handle_proto(sender, text)
             end
             if has_players() then tell(sender, 'aa~r ' .. n .. ' no players'); return end
             P.follow_fight = false
-            if aa_running() then send('aa stop'); coroutine.sleep(1) end
+            if aa_running() then stop_fight_only(); coroutine.sleep(1) end
             local g = P.gen
             drop_trusts(g)
             tell(sender, 'aa~r ' .. n .. ((trust_count() == 0) and ' ok' or ' no trusts'))
@@ -2287,7 +2313,7 @@ handle_command = function(ctx, text)
     elseif c == 'mount' then
         if engaged() then return reply(ctx, my_name() .. " is fighting -- can't mount.") end
         P.follow_fight = false
-        if aa_running() then send('aa stop'); coroutine.sleep(1) end
+        if aa_running() then stop_fight_only(); coroutine.sleep(1) end
         local name = raw[2] and table.concat(raw, ' ', 2) or opt('mount')
         if not name or name == '' then name = 'Raptor' end
         send('input /mount "' .. name .. '"')
@@ -2372,6 +2398,11 @@ function aa_party_command(command, args)
         return false
     end
     if command == 'stop' then
+        -- v5.59: AA's own stop (stop_fight_only) ends only the fight
+        if P.own_stop and os.clock() - P.own_stop < 3 then
+            P.own_stop = nil
+            return false
+        end
         -- typed //aa stop: autoattack.lua stops the fight; v5.31: everything
         -- else stops too. Not when aa nav sent it to stop the loop before a
         -- warp (aa_nav_guarded) -- then only the fight stops.

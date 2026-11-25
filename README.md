@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.58** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.59** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -684,6 +684,7 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
 * **v5.55:**
   * `aa trade seals` / `crests` / `rems`: AA presses Enter through Shami's / Monisette's talk after each trade, so you don't click through it (their lines still show, so the counts are still read). `trade_auto_talk = false` in `nav` turns it off.
   * Fix: AA no longer stops with "Shami's talk is still open" when the talk opens a moment after the trade.
+* **v5.59:** `aa invite` / `aa retrust` that waited for a fight no longer cancel themselves when the fight ends (AA's own `aa stop` now ends only the fight loop), and the progress tells arrive whole: Windower cut them at the `;` before "gives up in ..." -- AA's chat lines never carry a `;` now.
 * **v5.58:** Group skillchain: the first teammate in line for a skillchain step keeps that turn -- a player whose TP comes up a moment later and outranks them waits out their turn instead of firing on top of them (overnight 11-25, 12-17% of steps were still wiped by a second WS landing too soon).
 * **v5.57:** `aa invite` / `aa retrust` sent while the party is fighting wait up to 3 minutes (`finish_timeout` 180) for the fight to end, and answer the sender (tell or party, the way the command came in) when the wait starts and every 30s (`finish_progress`) with the mob's HP% and the time left before the command gives up.
 * **v5.56:** `aa leader <name> sync <name>` (or `aa sync <name> leader <name>`) does both: the current leader sets the Level Sync first (turning an old one off, ~30s), then passes the leader. Before, the sync part was ignored.
