@@ -18,6 +18,7 @@
     v4.90: aa gsc ? -- every AA re-sends its profile; aa~g lines are hidden,
     v5.52: aa fight member's corpse switch is verified; engage packet when /attack on didn't take,
     v5.56: aa leader <name> sync <name> (either order): sync first, then the leader is passed,
+    v5.57: waiting for a fight to end (invite / retrust): 3 min, sender gets mob HP% every 30s,
     v4.75: stacking watch -- aa fight members re-stack on the leader mid-fight
     (within restack_max), the leader keeps its aa fight spot),
     v5.06: aa nav <zone or place> -- fastest warp there (nav.lua); /p aa nav = every AA
@@ -82,7 +83,8 @@ local D = {
     stack_timeout  = 30,     -- s a member runs toward the leader before giving up
     stack_wait     = 5,      -- s the leader waits for members to stack before the first pull
     trust_wait     = 120,    -- s after dropping trusts before the inviting leader calls them again
-    finish_timeout = 300,    -- s to finish the mobs fighting the party before an invite / retrust is cancelled
+    finish_timeout = 180,    -- s to finish the mobs fighting the party before an invite / retrust is cancelled (v5.57: 300 -> 180)
+    finish_progress = 30,    -- v5.57: s between "still fighting: <mob> at N% HP" replies to the sender
     reply_timeout  = 8,      -- s to wait for another character's AA to answer
     auto_accept    = true,   -- accept party invites from friends
     mount          = 'Raptor',
@@ -490,13 +492,46 @@ local function start_mode(mode)
     end
 end
 
+-- v5.57: the mob the party is fighting and its HP%, for the progress replies:
+-- our own target when engaged, else the first mob on the party
+local function fight_mob()
+    local p = me()
+    if p and p.status == 1 then
+        local t = windower.ffxi.get_mob_by_target('t')
+        if t and t.spawn_type == 16 and (t.hpp or 0) > 0 then return t end
+    end
+    local _, m = party_fighting()
+    return m
+end
+local function mmss(s)
+    s = math.max(0, math.floor(s + 0.5))
+    return string.format('%d:%02d', math.floor(s / 60), s % 60)
+end
 -- no new pulls; wait until no mob is fighting the party (true) or timeout (false)
-local function finish_fights(g, timeout)
+-- v5.57 (Mark, 11-25: "give it 3 minutes to finish fighting ... a response back
+-- to the requestor ... that gives the current mob HP %, so that the sender can
+-- tell there is progress being made"): with ctx, the sender gets a line at the
+-- start and every finish_progress s: "<mob> at N% HP -- <what> when it's over;
+-- gives up in m:ss".
+local function finish_fights(g, timeout, ctx, what)
     if aa_running() and aa_get_mode() == 'pull' then aa_set_mode('assist') end
     local t0, quiet = os.clock(), 0
+    local every = tonumber(opt('finish_progress')) or 30
+    local next_at = t0
     while os.clock() - t0 < timeout do
-        if party_fighting() then quiet = 0 else quiet = quiet + 1 end
+        local fighting = party_fighting()
+        if fighting then quiet = 0 else quiet = quiet + 1 end
         if quiet >= 3 then return true end
+        local now = os.clock()
+        if ctx and fighting and every > 0 and now >= next_at then
+            local m = fight_mob()
+            local mob = m and string.format('%s at %d%% HP', m.name or 'mob', m.hpp or 0) or 'a mob'
+            local first = next_at == t0
+            reply(ctx, string.format('%s %s -- %s when it\'s over; gives up in %s.',
+                first and 'Finishing the current fight first (no new pulls):' or 'Still fighting:',
+                mob, what or 'going on', mmss(timeout - (now - t0))))
+            next_at = (first and now or next_at) + every
+        end
         if not sleep(g, 1) then return false end
     end
     return false
@@ -923,8 +958,7 @@ local function run_invite(g, ctx, inv, sync, lead, fight)
     local was_mode = aa_get_mode()
     if not already and (was_running or party_fighting()) then
         P.step = 'finishing the current fight'
-        reply(ctx, 'Finishing the current fight first (no new pulls), then inviting ' .. inv .. '.')
-        if not finish_fights(g, opt('finish_timeout')) then
+        if not finish_fights(g, opt('finish_timeout'), ctx, 'inviting ' .. inv) then
             if alive(g) and was_running and aa_running() then aa_set_mode(was_mode) end
             return fail(g, ctx, 'Still fighting after ' .. opt('finish_timeout') .. 's -- invite cancelled.')
         end
@@ -1266,7 +1300,7 @@ local function cmd_retrust(ctx)
     if was_running or party_fighting() then
         P.step = 'finishing the current fight'
         say('RETRUST: finishing the current fight first (no new pulls).')
-        if not finish_fights(g, opt('finish_timeout')) then
+        if not finish_fights(g, opt('finish_timeout'), ctx, 'redoing the Trusts') then
             if alive(g) and was_running and aa_running() then aa_set_mode(was_mode) end
             return fail(g, ctx, 'Still fighting after ' .. opt('finish_timeout') .. 's -- retrust cancelled.')
         end

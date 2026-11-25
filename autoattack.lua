@@ -150,7 +150,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.56'
+_addon.version  = '5.57'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -13351,6 +13351,20 @@ v5.56 - aa leader <name> sync <name> sets the sync too (Mark, 2026-11-24:
           the leader after it.
         * aa leader <yourself> no longer sends /pcmd leader to yourself; with
           nothing else to do it says you're already the leader.
+v5.57 - Waiting for a fight to end: 3 minutes, with progress replies (Mark,
+        2026-11-25: "give it 3 minutes to finish fighting before the command
+        times out and stops ... a response back to the requestor (via /t or
+        /p depending on how the command came in) that gives the current mob
+        HP %, so that the sender can tell there is progress being made. The
+        response can also include time till command times out").
+        * party.finish_timeout 300 -> 180 s (aa invite, aa retrust).
+        * The sender gets a reply where the command came from (tell / party /
+          your own chat) when the wait starts and every party.finish_progress
+          (30) s: "Finishing the current fight first (no new pulls): Locus
+          Dire Bat at 62% HP -- inviting Vayne when it's over; gives up in
+          3:00." then "Still fighting: Locus Dire Bat at 18% HP -- ...; gives
+          up in 2:30." The mob is your own target when engaged, else the
+          first mob on the party. finish_progress = 0 turns the replies off.
 ]]
 
 

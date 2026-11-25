@@ -1928,7 +1928,8 @@ local party = {enabled = true,
 	stack_timeout  = 30,     -- s a member runs toward the leader before giving up
 	stack_wait     = 5,      -- s the leader waits for members to stack before the first pull
 	trust_wait     = 120,    -- s after dropping Trusts before the inviting leader calls them again
-	finish_timeout = 300,    -- s to finish mobs fighting the party before an invite / retrust is cancelled
+	finish_timeout = 180,    -- s to finish mobs fighting the party before an invite / retrust is cancelled (v5.57: 3 min)
+	finish_progress = 30,    -- v5.57: s between "still fighting: <mob> at N% HP" replies to whoever sent the command (0 = off)
 	reply_timeout  = 8,      -- s to wait for another character's AutoAttack to answer
 	auto_accept    = true,   -- accept party invites from friends automatically
 	mount          = 'Raptor',     -- aa mount (no name given)

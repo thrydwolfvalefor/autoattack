@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.56** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.57** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -684,6 +684,7 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
 * **v5.55:**
   * `aa trade seals` / `crests` / `rems`: AA presses Enter through Shami's / Monisette's talk after each trade, so you don't click through it (their lines still show, so the counts are still read). `trade_auto_talk = false` in `nav` turns it off.
   * Fix: AA no longer stops with "Shami's talk is still open" when the talk opens a moment after the trade.
+* **v5.57:** `aa invite` / `aa retrust` sent while the party is fighting wait up to 3 minutes (`finish_timeout` 180) for the fight to end, and answer the sender (tell or party, the way the command came in) when the wait starts and every 30s (`finish_progress`) with the mob's HP% and the time left before the command gives up.
 * **v5.56:** `aa leader <name> sync <name>` (or `aa sync <name> leader <name>`) does both: the current leader sets the Level Sync first (turning an old one off, ~30s), then passes the leader. Before, the sync part was ignored.
 * **v5.05:** `aa fight` members stack once after each kill instead of following the leader; they switch to a new party leader and stop when the leader leaves. `aa follow` stops when the followed player leaves.
 * **v5.04:** the group skillchain only waits for a teammate under 1000 TP when their TP gain (tracked per player) gets them to 1000 before the chain window closes (`tp_project`).
