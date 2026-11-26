@@ -1113,7 +1113,7 @@ local HELP = {
     'aa sneak | invis | sneak invis  (spell, else Spectral Jig, else Silent Oil / Prism Powder)',
     'aa warp | aa 299  (party: a Warp II mage warps everyone, else each uses its Warp Ring)',
     'aa nav <zone or place>  (v5.06: each AA warps there its own fastest way) | aa nav cancel',
-    'aa buy <item> [qty] | aa buy list [text] | aa buy scan  (v5.45: Curio Vendor / Green Thumb Moogle)',
+    'aa buy <item> [qty] | aa buy list [text] | aa buy scan  (v5.45: Curio Vendor / Green Thumb Moogle; v5.61: Asrahd)',
     "aa trade seals | crests (every seal + crest, stored with Shami) | rems (Rem's Tales to Monisette) | trade list | trade swap <from> <to> [n] | trade rate 2|3|auto  (v5.49)",
     'aa reload  (/t: that character, /p: everyone) | aa reload all  (whole party)',
     'aa update [me|force]  (whole party, any zone; "me" = only you -- newest AutoAttack from GitHub, then reload)',

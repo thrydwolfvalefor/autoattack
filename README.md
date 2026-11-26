@@ -2,7 +2,7 @@
 
 AutoAttack is a Windower 4 Lua addon that runs your character's fight loop for you: it can assist your party's target or pull mobs on its own, then keeps your weapon skills, job abilities, spells, healing, food and EXP/CP rings going while you fight.
 
-Current version: **5.59** (see the changelog block at the bottom of `autoattack.lua`).
+Current version: **5.64** (see the changelog block at the bottom of `autoattack.lua`).
 
 > **Read this first.** Automating gameplay may be against the game's Terms of Service. You use this addon at your own risk. The authors are not responsible for warnings, suspensions or lost items.
 
@@ -174,7 +174,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | `mount [name]` / `dismount` | Stops AutoAttack and mounts (`party.mount`, default Raptor) / dismounts. |
 | `sneak` / `invis` / `sneak invis` | Every character that doesn't already have the buff puts it up: its own Sneak / Invisible spell (main or sub job, MP and recast checked), else Spectral Jig (DNC main or sub, level 25+, gives both), else Silent Oil / Prism Powder. Sneak always goes first. Then it answers in the same channel it was asked in (`/p` or `/t`) with the time left, e.g. `[AA] Shadowhammer: Sneak 4:05, Invisible 4:50`, or what it couldn't do. Refused while fighting, mounted or resting (v4.51). |
 | `warp` (or `299`) | **In party chat:** everyone stops AutoAttack and following. If anyone in the party can cast Warp II (they say `[AA] <name>: I can Warp II.`), that mage casts Warp II on every other player in the zone, then warps itself; the others wait up to `warp_wait` (90s), then use their ring. With no Warp II mage, every character equips its Warp Ring on the **right ring** (ring2), waits `warp_ring_delay` (11s) and uses it; the ring that was there goes back on after the warp, or right away if the Warp Ring doesn't go off (v4.53). **By /tell or typed:** just that character (its own Warp spell, else the ring). Refused while fighting (v4.52). |
-| `buy <item> [qty]` | Each AA buys it from the Curio Vendor / Green Thumb Moogle next to it (v5.45, see [Shopping: aa buy](#shopping-aa-buy-v545)). |
+| `buy <item> [qty]` | Each AA buys it from the Curio Vendor / Green Thumb Moogle or Asrahd next to it (v5.45, v5.61 Asrahd, see [Shopping: aa buy](#shopping-aa-buy-v545)). |
 | `trade seals` / `crests` / `rems` | Each AA stores its own seals / crests with Shami, or Rem's Tales with Monisette (v5.49, see [Storing: aa trade](#storing-aa-trade-v549)). |
 | `nav <zone or place>` | Every AA that gets it goes there its own fastest way (warp NPC, ring or spell) and answers in party chat; `nav cancel` stops it. See [Travel: aa nav](#travel-aa-nav) (v5.06). |
 | `pass` | Passes every item in the treasure pool. |
@@ -207,6 +207,7 @@ Changing job while the loop is idle is fine. The job table is re-read every time
 | `aa buy scan` | at a Curio Vendor Moogle: AA opens each of its menus once and remembers what it sells to this character (Rhapsodies unlock different items) |
 | (open a menu by hand) | any menu you open at either moogle is remembered the same way -- the Green Thumb Moogle is learned only like this (its menu also takes you out of the garden) |
 | `aa buy list [text]` | what AA knows, with prices |
+| Asrahd (v5.61) | Aht Urhgan Whitegate (I-8), Imperial Standing (Instant Reraise III, Instant Warp, Lambent cells, Glyph, ...). Buy each item from him **by hand once**: AA keeps the menu answers you sent and which item arrived, then `aa buy instant reraise iii 3` talks to him with the menu hidden once per item. The IS price shows after it has seen your IS go down ("20 IS"); then AA also stops when your IS runs short |
 | `aa buy <text> [qty]` | one item matches (or the exact name): buys it; several: opens a list -- left-click a row to buy it (v5.54). Each word can be the start of a word of the name (`aa buy sar cot 12` = Saruta Cotton). Checks gil and free inventory slots first; walks to the moogle if it is within 50 yalms |
 
 Kept per character in `data/shops_<name>.lua`. Works typed, by tell and by party chat (each AA buys for itself).
@@ -254,11 +255,15 @@ AA knows what Shami holds from what he and Shemo say (after a trade, or Shemo's 
 
 **Trips with legs (v5.12):** with no warp in your zone, nav leaves by an NPC (Faurie out of the Chateau) or on foot into the zone next door, then uses the warp there that is nearest to where you arrive, and carries on by itself after each zone change (up to 3 legs).
 
-**Escha / Abyssea entrances (v5.30):** a zone you can only enter through a portal (Reisenjima, Escha, Abyssea) is reached by getting to the portal's zone first -- e.g. `aa nav empor` from San d'Oria: "Dim. Ring (Dem) -> Konschtat Highlands, then talk to Dimensional Portal". After the ring AA heads for the portal (its spot is built in, so it doesn't have to be loaded yet), uses it, and then finds Emporox.
+**Escha / Abyssea entrances (v5.30):** a zone you can only enter through a portal (Reisenjima, Escha, Abyssea) is reached by getting to the portal's zone first -- e.g. `aa nav empor` from San d'Oria: "Dim. Ring (Dem) -> Konschtat Highlands, then talk to Dimensional Portal". After the ring AA heads for the portal (its spot is built in, so it doesn't have to be loaded yet), uses it, and then finds Emporox. v5.60: the Undulating Confluences work the same way -- Escha - Zi'Tah through Qufim Island, Escha - Ru'Aun through Misareaux Coast ("Home Point -> Qufim Island, then talk to Undulating Confluence").
 
 **Walk of Echoes (v5.32):** `aa nav walk of echoes` goes to Xarcabard [S] (Home Point there), then the Veridical Conflux next to it. Without Kupofried's medallion AA buys it there first (1000 gil; it says so if you're short), then goes in. The first time you pick in the conflux's menu yourself (buy, then enter); AA remembers both choices in `data/nav_learned.lua`. The Veridical Conflux inside Walk of Echoes takes you back to Xarcabard [S] (also learned the first time).
 
 **Mog Garden (v5.33):** the Mog Dinghy in Port San d'Oria / Port Bastok / Port Windurst, the Moogle in your Mog House (San d'Oria, Bastok, Windurst, Jeuno, Whitegate, Adoulin) and Dangueubert in Western Adoulin all lead there; the first time you pick Mog Garden in the menu and AA remembers it (a Mog House moogle's choice works in every town). Which way each character takes is `nav.via` in aa_config.lua -- e.g. `via = {['Mog Garden'] = {default = 'Eastern Adoulin / Cunegonde', Scracheebrat = "Southern San d'Oria"}}` (a zone, or `zone / NPC`). Since v5.37 only that way in is used, marked `[your way]`.
+
+**Numbered warps by name (v5.63):** `aa nav kamihr drifts #4` (or `aa nav kamihr 4`) goes to that exact Waypoint / Home Point / Survival Guide number. With no warp of that kind where you are, AA first takes you to a zone that has one ("Home Point -> Eastern Adoulin #1, then Waypoint -> Kamihr Drifts #4") and carries on there. Numbered warps only show when your search has a number in it. v5.64: `nav.via` works for a place too, and `'<zone> #<n>'` picks the warp you land on -- Kamihr Drifts #4 goes `Home Point -> Western Adoulin #1` (by the Auction House), then the Waypoint (`via = {['Kamihr Drifts #4'] = {default = 'Western Adoulin #1'}}`).
+
+**Into your Mog House (v5.62):** where you have to press or open something to get in -- the Elevator Button in Ru'Lude Gardens, Gate: Residential Area in Al Zahbi -- `aa nav <town> mog house` takes you there, walks to it, presses it and answers its menu (the first time you pick; AA remembers). Other places like that are learned the first time: whatever you talk to or open right before you end up in your Mog House.
 
 **Leaving your Mog House (v5.46):** inside your Mog House every aa nav trip starts by going out the door to the area you entered from, then the Home Point / Survival Guide close by there (worked out once you're outside). The first time you walk out and pick "area you entered from" yourself; AA remembers that choice and where the door is, and after that walks you to the door and picks it for you.
 
@@ -684,6 +689,7 @@ Any job, any weapon: if Shadow comes as THF with daggers, everyone's AutoAttack 
 * **v5.55:**
   * `aa trade seals` / `crests` / `rems`: AA presses Enter through Shami's / Monisette's talk after each trade, so you don't click through it (their lines still show, so the counts are still read). `trade_auto_talk = false` in `nav` turns it off.
   * Fix: AA no longer stops with "Shami's talk is still open" when the talk opens a moment after the trade.
+* **v5.61:** `aa buy` also buys Asrahd's Imperial Standing items (Instant Reraise III etc.): buy each one from him by hand once so AA learns his menu answers, then `aa buy <name> [qty]` does it, one hidden talk per item.
 * **v5.59:** `aa invite` / `aa retrust` that waited for a fight no longer cancel themselves when the fight ends (AA's own `aa stop` now ends only the fight loop), and the progress tells arrive whole: Windower cut them at the `;` before "gives up in ..." -- AA's chat lines never carry a `;` now.
 * **v5.58:** Group skillchain: the first teammate in line for a skillchain step keeps that turn -- a player whose TP comes up a moment later and outranks them waits out their turn instead of firing on top of them (overnight 11-25, 12-17% of steps were still wiped by a second WS landing too soon).
 * **v5.57:** `aa invite` / `aa retrust` sent while the party is fighting wait up to 3 minutes (`finish_timeout` 180) for the fight to end, and answer the sender (tell or party, the way the command came in) when the wait starts and every 30s (`finish_progress`) with the mob's HP% and the time left before the command gives up.

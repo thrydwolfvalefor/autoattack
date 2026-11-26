@@ -1968,7 +1968,9 @@ local nav = {enabled = true,
 	-- for everyone (default) or per character (Shadowhammer = ...). v5.37: only
 	-- that way in is used (marked [your way]); warps that land you somewhere
 	-- first still count, the trip carries on from there.
-	via           = {['Mog Garden'] = {default = 'Eastern Adoulin / Cunegonde'}},   -- Home Point #2 / Survival Guide, then Cunegonde
+	via           = {['Mog Garden'] = {default = 'Eastern Adoulin / Cunegonde'},   -- Home Point #2 / Survival Guide, then Cunegonde
+	                 -- v5.64: a place by its name, '<zone> #<n>' = land on that warp there
+	                 ['Kamihr Drifts #4'] = {default = 'Western Adoulin #1'}},   -- Home Point by the Auction House, then the Waypoint
 	-- v5.37: leaving Mog Garden always by this way out (Green Thumb Moogle ->
 	-- Eastern Adoulin); '' = the fastest of all its ways out (Mog Dinghy too)
 	garden_exit   = 'Eastern Adoulin',

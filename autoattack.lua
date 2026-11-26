@@ -150,7 +150,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.59'
+_addon.version  = '5.64'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -13415,6 +13415,67 @@ v5.58 - Group skillchain: a promised turn stays promised (Mark, 2026-11-25:
           half the time.
         * Late guard: a later player's turn counts from 1s before it opens
           (each PC times turns from when it saw the last WS land).
+v5.64 - aa nav: Kamihr Drifts #4 via Western Adoulin Home Point #1 (Mark,
+        2026-11-26: "for kamihr drifts #4, the preference is western adoulin hp
+        near AH, then waypoint").
+        * nav.via can name a place ('Kamihr Drifts #4'), and '<zone> #<n>' picks
+          the warp you land on there. Default: ['Kamihr Drifts #4'] =
+          {default = 'Western Adoulin #1'} (nav.lua + aa_config_defaults.lua).
+        * "<warp> -> <zone>, then <its warp> -> <place>" counts as going through
+          that zone (gate), so the preference applies; Warp Ring "then on" rows
+          stay as before. Port Jeuno -> Kamihr Drifts #4: "Home Point ->
+          Western Adoulin #1, then Waypoint -> Kamihr Drifts #4 [your way]".
+          Where a Waypoint is right by you, it is still used directly.
+v5.63 - aa nav to a numbered warp by name (Mark, 2026-11-26: "how would I get to
+        waypoint #4 in kamihr drifts?").
+        * nav.lua: numbered warps (Home Points, Survival Guides, Waypoints ...
+          "Kamihr Drifts #4") are places in the search too, listed only when the
+          search has a number in it ("kamihr drifts #4", "kamihr 4").
+        * No warp of that kind where you are: also "get to a zone with one, then
+          use it" (Port Jeuno -> "Home Point -> Eastern Adoulin #1, then Waypoint
+          -> Kamihr Drifts #4"; the trip carries on there by itself).
+        * The walk from where you land to the place counts; a warp whose landing
+          spot is unknown counts 60s extra when there is a place to reach.
+v5.62 - aa nav into your Mog House by the Elevator Button and the like (Mark,
+        2026-11-25: "add in the step in ru'lude gardens of interacting with
+        Elevator Button to get into the mog house, and similar steps for other
+        places where you have to interact to get into your mog house").
+        * nav.lua MH_ENTRY: Ru'Lude Gardens Elevator Button (49,-75), Al Zahbi
+          Gate: Residential Area (40,-68) (Topaz NPC list). A trip to a "<town>
+          - Mog House" place (and a Mog House moogle route) ends with AA walking
+          to it (<=50y; farther: you walk, AA presses it when you're within 5y),
+          pressing it, and answering its menu with the learned choice.
+        * Learned (nav_learned "mhentry:<zone>:<name>" = spot + menu choice):
+          whatever you talked to / opened (0x01A) in the 15s before you ended up
+          in your Mog House, with the menu choice you made there.
+        * Already in the zone: the landmark route now also offers walking (it
+          used to warp Home Point #2 -> Home Point #2 to reach the Mog House).
+v5.61 - aa buy: Asrahd's Imperial Standing items (Mark, 2026-11-25: "for aa
+        buy, lets include the items such as reraise III scroll from Asrahd").
+        Asrahd (Aht Urhgan Whitegate I-8) sells for Imperial Standing through
+        his talk menu: no shop list, the menu answer is the item. nav.lua:
+        * Buy an item from him by hand once: AA keeps the menu answers you
+          sent and the item that turned up in your inventory ("[AA] buy:
+          learned Instant Reraise III from Asrahd"), saved with the moogles'
+          items in data/shops_<name>.lua (kind = "event").
+        * aa buy <text> [qty] then talks to him with the menu hidden, sends
+          those answers, waits for the item, closes -- one talk per item --
+          and stops when nothing comes. The IS price is learned from his menu
+          (your IS before/after) and shown as "20 IS"; with the price known
+          AA stops when your IS is short.
+        * An item of his AA hasn't learned yet ("aa buy lambent"): AA says to
+          buy one by hand once. Not here: "go there first (aa nav asrahd)".
+        * nav.lua was at Lua's 200-locals limit: the new parts live in one
+          table (EV).
+v5.60 - aa nav into Escha - Zi'Tah / Ru'Aun by the Undulating Confluences
+        (Mark, 2026-11-25: "can aa nav also use undulating conflux in quifim
+        island and others like that to enter escha zones?"). They were already
+        known as the way in (Qufim Island -> Zi'Tah, Misareaux Coast -> Ru'Aun)
+        but had no spot, so from elsewhere the step read "then talk to the
+        entrance" and on arrival nothing happened until the confluence had
+        loaded. nav.lua ENTER_SPOTS: Qufim (-205,75), Misareaux (-49,572) from
+        LandSandBoat. Port Jeuno -> Zi'Tah: "Home Point -> Qufim Island, then talk
+        to Undulating Confluence"; in Qufim before it loads AA walks for it.
 v5.59 - Fight-wait replies reach the sender whole, and the invite no longer
         cancels itself (Mark, 2026-11-25: "is AA sending status updates after
         it gets a command that it has to wait for the fight to finish? ... I

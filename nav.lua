@@ -1,5 +1,5 @@
 --[[
-    nav.lua -- AutoAttack travel: aa nav (v5.06; v5.07 NPCs + unreachable zones listed, v5.08 lands closest to the way on, v5.09 walks you to a close warp, v5.10 warps inside your own zone toward the way on, v5.11 zone-moving NPCs, v5.12 trips with legs + finding NPCs, v5.13 warps not loaded yet after zoning, v5.14 checked NPC targeting, v5.15 more ways to target + updates on your own screen, v5.16 walking legs keep the goal, v5.17 hovered line highlighted, v5.18 NPCs found by what they are, v5.19 aa stop stops nav + your own /p line opens the list, v5.20 list pages, v5.21 [X] close, v5.22 learns routes you use by hand + Mog House, v5.23 ways out of Mog Garden, v5.24 Mog Garden always out to Eastern Adoulin, v5.25 stronger row highlight, v5.30 Escha / Abyssea entrances reached by ring or warp first, v5.31 in-zone warp to the NPC (Eschan Portal #8 for Emporox) + craft-style rows + aa stop stops it all, v5.32 Walk of Echoes via Xarcabard [S] + Kupofried's medallion, Warp Ring / Warp home from a zone with no warp, v5.33 Mog Garden ways + nav.via preference, ring cooldowns, warp spots AA has seen, v5.34 walks around things in the way + learns the path, v5.35 Mog Garden: out by the Mog Dinghy / Green Thumb Moogle, never warped out, v5.36 Shadowhammer into Mog Garden via Eastern Adoulin, v5.37 Mog Garden always through Eastern Adoulin: in by Cunegonde, out by the Green Thumb Moogle, v5.38 or the Mog Dinghy's Eastern Adoulin choice, v5.39 the walk from where a Survival Guide lands counts too, v5.40 [X] close is a button that lights up, v5.41 Warp Ring / Instant Warp / Warp never on top when this zone has a Home Point or Survival Guide, v5.42 also with a nav.via way, v5.43 side-step off the Eastern Adoulin Mog House / Mog Garden spawn, v5.44 Warp Ring before Instant Warp, Walk of Echoes out by the conflux first, v5.45 aa buy for the Curio Vendor / Green Thumb Moogles, v5.46 in your Mog House: out the door first, v5.49 aa trade: seals / crests to Shami, Rem's Tales to Monisette, Shemo exchanges, v5.50 aa trade seals / crests both trade every seal and crest, v5.51 no 255 cap for Rem's Tales, v5.54 aa buy: several matches open a list to click, words match by their start, shop slots read right, v5.55 aa trade clicks through Shami's / Monisette's talk itself)
+    nav.lua -- AutoAttack travel: aa nav (v5.06; v5.07 NPCs + unreachable zones listed, v5.08 lands closest to the way on, v5.09 walks you to a close warp, v5.10 warps inside your own zone toward the way on, v5.11 zone-moving NPCs, v5.12 trips with legs + finding NPCs, v5.13 warps not loaded yet after zoning, v5.14 checked NPC targeting, v5.15 more ways to target + updates on your own screen, v5.16 walking legs keep the goal, v5.17 hovered line highlighted, v5.18 NPCs found by what they are, v5.19 aa stop stops nav + your own /p line opens the list, v5.20 list pages, v5.21 [X] close, v5.22 learns routes you use by hand + Mog House, v5.23 ways out of Mog Garden, v5.24 Mog Garden always out to Eastern Adoulin, v5.25 stronger row highlight, v5.30 Escha / Abyssea entrances reached by ring or warp first (v5.60: + Undulating Confluences), v5.31 in-zone warp to the NPC (Eschan Portal #8 for Emporox) + craft-style rows + aa stop stops it all, v5.32 Walk of Echoes via Xarcabard [S] + Kupofried's medallion, Warp Ring / Warp home from a zone with no warp, v5.33 Mog Garden ways + nav.via preference, ring cooldowns, warp spots AA has seen, v5.34 walks around things in the way + learns the path, v5.35 Mog Garden: out by the Mog Dinghy / Green Thumb Moogle, never warped out, v5.36 Shadowhammer into Mog Garden via Eastern Adoulin, v5.37 Mog Garden always through Eastern Adoulin: in by Cunegonde, out by the Green Thumb Moogle, v5.38 or the Mog Dinghy's Eastern Adoulin choice, v5.39 the walk from where a Survival Guide lands counts too, v5.40 [X] close is a button that lights up, v5.41 Warp Ring / Instant Warp / Warp never on top when this zone has a Home Point or Survival Guide, v5.42 also with a nav.via way, v5.43 side-step off the Eastern Adoulin Mog House / Mog Garden spawn, v5.44 Warp Ring before Instant Warp, Walk of Echoes out by the conflux first, v5.45 aa buy for the Curio Vendor / Green Thumb Moogles, v5.46 in your Mog House: out the door first, v5.62 into it by the Elevator Button & co., v5.63 numbered warps by name ("kamihr drifts #4"), v5.64 nav.via per place + landing warp ("Western Adoulin #1"), v5.49 aa trade: seals / crests to Shami, Rem's Tales to Monisette, Shemo exchanges, v5.50 aa trade seals / crests both trade every seal and crest, v5.51 no 255 cap for Rem's Tales, v5.54 aa buy: several matches open a list to click, words match by their start, shop slots read right, v5.55 aa trade clicks through Shami's / Monisette's talk itself, v5.61 aa buy: Asrahd's Imperial Standing items)
 
     Loaded by autoattack.lua. Finds the fastest way to a zone (or a place in
     a zone, like an Auction House) from where you stand, shows the choices in
@@ -77,7 +77,10 @@ local D = {
     -- listed and used first; the rest still show in the list.
     -- v5.37: '<zone>' or '<zone> / <NPC>'; with a preference only that way (and
     -- warps that land you somewhere first) is used, the other ways in are left out
-    via           = {['Mog Garden'] = {default = 'Eastern Adoulin / Cunegonde'}},
+    via           = {['Mog Garden'] = {default = 'Eastern Adoulin / Cunegonde'},
+                     -- v5.64: '<zone> #<n>' = land on that warp there (Western Adoulin
+                     -- Home Point #1, by the Auction House), then the Waypoint
+                     ['Kamihr Drifts #4'] = {default = 'Western Adoulin #1'}},
     -- v5.37: leaving Mog Garden: always this way out (Green Thumb Moogle ->
     -- Eastern Adoulin); '' / false = the fastest of all its ways out (Mog Dinghy too)
     garden_exit   = 'Eastern Adoulin',
@@ -266,7 +269,7 @@ local FIXED_ONLY = {['280:Green Thumb Moogle'] = {[256] = true, [257] = true},  
 -- spell (Mark, 2026-11-23: "'aa nav' when player is in mog garden should first
 -- be to exit mog garden via dinghy or green thumb moogle, not warping out")
 local NO_WARP_OUT = {[280] = true}
-SHOP_NPCS_ALL = {['Curio Vendor Moogle'] = true, ['Green Thumb Moogle'] = true}   -- v5.46 (aa buy's moogles)
+SHOP_NPCS_ALL = {['Curio Vendor Moogle'] = true, ['Green Thumb Moogle'] = true, ['Asrahd'] = true}   -- v5.46 (aa buy's moogles; v5.61 + Asrahd)
 -- v5.44: zones whose own way out comes before any warp (Mark, 2026-11-23: "in
 -- Walk of Echoes, favor Conflux instead of warp") -- warps are still listed
 local PREFER_EXIT = {[182] = true}
@@ -398,6 +401,11 @@ local ENTER_SPOTS = {
     ['abyssea:102'] = {name = 'Cavernous Maw', x = -558, y = 638, r = 40},
     ['abyssea:108'] = {name = 'Cavernous Maw', x = 95, y = -580, r = 40},
     ['abyssea:117'] = {name = 'Cavernous Maw', x = -28, y = -685, r = 40},
+    -- v5.60: the Undulating Confluences into Escha - Zi'Tah (Qufim Island) and
+    -- Escha - Ru'Aun (Misareaux Coast), from LandSandBoat (!pos; Qufim's matches
+    -- where AA saw it)
+    ['escha:126'] = {name = 'Undulating Confluence', x = -205, y = 75, r = 40},
+    ['escha:25']  = {name = 'Undulating Confluence', x = -49, y = 572, r = 40},
 }
 local enter_spot   -- defined after the NPC-spot file (needs SEEN)
 local seen_warps   -- v5.33: warp NPC spots AA has seen in a zone (defined with SEEN)
@@ -440,7 +448,11 @@ local function build_index()
                                     list[#list + 1] = {map = m.key, zone_name = zn, sub = tostring(sub), data = sd,
                                         zone_id = zid_of(zn, sd),
                                         label = zn .. (num and (' #' .. sub) or (' - ' .. tostring(sub)))}
-                                    if not num then LANDMARKS[#LANDMARKS + 1] = list[#list] end
+                                    if not num then LANDMARKS[#LANDMARKS + 1] = list[#list]
+                                    else   -- v5.63: "Kamihr Drifts #4" -- searched only with a number in it
+                                        LANDMARKS[#LANDMARKS + 1] = {map = m.key, zone_name = zn, sub = tostring(sub), data = sd, zone_id = list[#list].zone_id,
+                                            label = list[#list].label, num = true}
+                                    end
                                 end
                             end
                         end
@@ -806,6 +818,8 @@ local function options_for(T, devs, here, spd, extra, hops, via, tgt)
         if tgt and lx then
             o.arrive = math.sqrt((lx - tgt.x) ^ 2 + (ly - tgt.y) ^ 2)
             o.time = o.time + o.arrive / spd
+        elseif tgt and o.entry and o.map and o.map ~= 'transport' then
+            o.time = o.time + 60   -- v5.63: lands who knows where in that zone
         end
         out[#out + 1] = o
     end
@@ -953,16 +967,18 @@ end
 local function is_jump(o) return o.kind == 'device' or o.kind == 'npc' or o.kind == 'mh' or o.kind == 'leg' or o.kind == 'ring' or o.kind == 'item' or o.kind == 'spell' end
 
 -- v5.33: nav.via -- the zone this character likes to go through to reach T
-local function via_pref(T)
+local function via_pref(T, key)
     local v = opt('via')
     if type(v) ~= 'table' then return nil end
-    local e = v[zname(T)] or v[T] or v[tostring(T)]
+    local e = (key and v[key]) or v[zname(T)] or v[T] or v[tostring(T)]   -- v5.64: a place's own entry first
     if type(e) == 'table' then e = e[my_name()] or e.default end
     if type(e) == 'number' then return e end
     if type(e) == 'string' and e ~= '' then
         local zn, npc = e:match('^%s*(.-)%s*/%s*(.-)%s*$')   -- v5.37: "<zone> / <NPC>"
         if not zn then zn = e end
-        return ZID[zn:lower()], (npc and npc ~= '') and npc or nil
+        local zn2, num = zn:match('^(.-)%s*#(%d+)$')          -- v5.64: "<zone> #<n>"
+        if zn2 then zn = zn2 end
+        return ZID[zn:lower()], (npc and npc ~= '') and npc or nil, num
     end
     return nil
 end
@@ -971,6 +987,9 @@ local function gate_zone(o, T)
     if o.then_npc then return o.via, o.then_npc end
     if o.then_mh then return o.via, o.then_mh end
     if (o.kind == 'npc' or o.kind == 'mh') and o.tr and o.tr.to == T then return o.tr.zone, o.tr.name end
+    if o.then_warp and o.via and not o.via_home then   -- v5.64: a warp there, then its own warp on
+        return o.via, nil, o.entry and o.entry.sub
+    end
     return nil
 end
 
@@ -1004,10 +1023,37 @@ local function route(T, lm, devs, tgt)
                 end
             end
         end
+        -- v5.62: already in its zone: walking there counts too (no warp from
+        -- Home Point #2 to Home Point #2 to reach the Mog House next to it)
+        local me_m = windower.ffxi.get_mob_by_target('me')
+        if lm.zone_id == here and lm.data and tonumber(lm.data.x) and me_m and tonumber(me_m.x) then
+            local ar = math.sqrt((me_m.x - lm.data.x) ^ 2 + (me_m.y - lm.data.y) ^ 2)
+            out[#out + 1] = {kind = 'here', to = here, hops = 0, arrive = ar, time = ar / spd}
+        end
         local usable = false
         for _, o in ipairs(out) do if not o.locked then usable = true end end
         if usable or not lm.zone_id then return sort_opts(out) end
         T = lm.zone_id
+        -- v5.63: the walk from where you land to the place counts
+        if not tgt and lm.data and tonumber(lm.data.x) then tgt = {x = lm.data.x, y = lm.data.y} end
+        -- v5.63: no warp of its kind here (a Waypoint for "Kamihr Drifts #4"):
+        -- get to a zone that has one, then use it -- the trip carries on there
+        if lm.map and lm.map ~= 'homepoints' then
+            local zs, menu = opt('zone_seconds'), opt('menu_seconds')
+            local done_z = {}
+            for _, e in ipairs(BY_MAP[lm.map] or {}) do
+                local z = e.zone_id
+                if z and z ~= here and not done_z[z] and e.data and tonumber(e.data.x) and not locked(e) then
+                    done_z[z] = true
+                    for _, o in ipairs(options_for(z, devs, here, spd, (menu[lm.map] or 6) + zs, 1, z, {x = e.data.x, y = e.data.y})) do
+                        if o.kind ~= 'npc' and o.kind ~= 'mh' and not o.locked then
+                            o.to, o.then_warp = lm.zone_id, (MAPINFO[lm.map] and MAPINFO[lm.map].label or 'warp') .. ' -> ' .. lm.label
+                            out[#out + 1] = o
+                        end
+                    end
+                end
+            end
+        end
     end
     if not T then return out end
     if T == here then
@@ -1171,7 +1217,8 @@ local function route(T, lm, devs, tgt)
     sort_opts(out)
     -- v5.33: your preferred way in (nav.via) first
     local pz, pn = nil, nil
-    if T then pz, pn = via_pref(T) end
+    local pnum = nil
+    if T then pz, pn, pnum = via_pref(T, lm and lm.label) end
     if pz and pz ~= here and T ~= here then
         -- v5.37: your way in even when another way is right here (Port San
         -- d'Oria's Mog Dinghy): get to that zone, then talk to the NPC
@@ -1246,8 +1293,8 @@ local function route(T, lm, devs, tgt)
         -- land you somewhere first stay: the trip carries on from there)
         local a, b = {}, {}
         for _, o in ipairs(out) do
-            local gz, gn = gate_zone(o, T)
-            if not o.locked and gz == pz and (not pn or gn == pn) then o.preferred = true; a[#a + 1] = o
+            local gz, gn, gsub = gate_zone(o, T)
+            if not o.locked and gz == pz and (not pn or gn == pn) and (not pnum or tostring(gsub) == pnum) then o.preferred = true; a[#a + 1] = o
             elseif gz == nil then b[#b + 1] = o
             else o.not_pref = true end
         end
@@ -1471,8 +1518,9 @@ local function search_with(q, hit)
         npcs[#npcs + 1] = {label = n.name .. (what and (' [' .. what:sub(1, 24) .. ']') or '') .. ' (' .. zname(n.zone) .. ')',
                            name = n.name, opts = opts, code = string.format('#n%d:%d:%d:%s', n.zone, n.x, n.y, n.name)}
     end
+    local digits = q:find('%d') ~= nil   -- v5.63
     for i, lm in ipairs(LANDMARKS) do
-        if hit(lm.label) then
+        if hit(lm.label) and (not lm.num or digits) then
             local opts = route(nil, lm, devs)
             if #opts > 0 then others[#others + 1] = {label = lm.label, opts = opts, code = '#l' .. i} end
         end
@@ -2210,7 +2258,10 @@ local function goal_of(code, label, ctx)
         g.npc = (nn and nn ~= '') and nn or nil
     end
     local l = code:match('^#l(%d+)$')
-    if l and LANDMARKS[tonumber(l)] then g.to = LANDMARKS[tonumber(l)].zone_id end
+    if l and LANDMARKS[tonumber(l)] then
+        g.to = LANDMARKS[tonumber(l)].zone_id
+        g.mh = (LANDMARKS[tonumber(l)].sub == 'Mog House') or nil   -- v5.62: then into the Mog House
+    end
     return g.to and g or nil
 end
 
@@ -2332,8 +2383,139 @@ N.door_left = function()
 end
 
 -- v5.31: an in-zone warp is done (no zone change): find the goal's NPC
+-- v5.62: getting INTO your Mog House where you have to press / open something
+-- (Mark, 2026-11-25: "add in the step in ru'lude gardens of interacting with
+-- Elevator Button to get into the mog house, and similar steps for other
+-- places"). Built in: Ru'Lude Gardens Elevator Button, Al Zahbi Gate:
+-- Residential Area (Topaz NPC list). Anything else: whatever you talk to /
+-- open right before you end up in your Mog House is learned
+-- (nav_learned "mhentry:<zone>:<name>", with its menu choice when it has one).
+local MH_ENTRY = {
+    [243] = {name = 'Elevator Button', x = 49, y = -75},           -- Ru'Lude Gardens
+    [48]  = {name = 'Gate: Residential Area', x = 40, y = -68},    -- Al Zahbi
+}
+local function mh_entry(z)
+    for k, v in pairs(N.learned or {}) do
+        local lz, name = tostring(k):match('^mhentry:(%d+):(.+)$')
+        if lz and tonumber(lz) == z and type(v) == 'table' then return {name = name, x = v.x, y = v.y, L = v} end
+    end
+    local e = MH_ENTRY[z]
+    if e then return {name = e.name, x = e.x, y = e.y, L = N.learned['mhentry:' .. z .. ':' .. e.name]} end
+    return nil
+end
+local function named_mob(name)
+    local best, bd = nil, nil
+    for idx, n in pairs(windower.ffxi.get_mob_list() or {}) do
+        if n == name then
+            local m = windower.ffxi.get_mob_by_index(idx)
+            if m and m.valid_target and (m.id or 0) > 0 then
+                local d = math.sqrt(m.distance or 0)
+                if not bd or d < bd then best, bd = m, d end
+            end
+        end
+    end
+    return best, bd
+end
+local function enter_mh(ctx, label)
+    if in_mog_house() then return end
+    local z = zone_id()
+    local e = mh_entry(z)
+    if not e then return tell_ctx(ctx, my_name() .. ': ' .. tostring(label) .. ' -- walk into your Mog House.') end
+    local me_m = windower.ffxi.get_mob_by_target('me')
+    local mob, d = named_mob(e.name)
+    if not d and me_m and e.x then d = math.sqrt((me_m.x - e.x) ^ 2 + (me_m.y - e.y) ^ 2) end
+    if not d then return tell_ctx(ctx, my_name() .. ': walk to the ' .. e.name .. ' to get into your Mog House.') end
+    if d > (tonumber(opt('walk_range')) or 50) then
+        N.mh_enter = {t = os.clock(), name = e.name, L = e.L, ctx = ctx, wait = true}
+        return tell_ctx(ctx, string.format('%s: %s -- walk to the %s (%dy); AA presses it when you are close.', my_name(), tostring(label), e.name, math.floor(d + 0.5)))
+    end
+    tell_ctx(ctx, string.format('%s: %s -- to the %s (%dy), into your Mog House.', my_name(), tostring(label), e.name, math.floor(d + 0.5)))
+    local t0 = os.clock()
+    while os.clock() - t0 < 30 do
+        mob = named_mob(e.name)
+        me_m = windower.ffxi.get_mob_by_target('me')
+        if not me_m then break end
+        local tx, ty = (mob and mob.x) or e.x, (mob and mob.y) or e.y
+        local dd = math.sqrt((me_m.x - tx) ^ 2 + (me_m.y - ty) ^ 2)
+        if dd <= 3 and mob then break end
+        windower.ffxi.run(tx - me_m.x, ty - me_m.y)
+        coroutine.sleep(0.1)
+    end
+    windower.ffxi.run(false)
+    mob = named_mob(e.name)
+    if not mob or math.sqrt(mob.distance or 999) > 6 then
+        N.mh_enter = {t = os.clock(), name = e.name, L = e.L, ctx = ctx, wait = true}
+        return tell_ctx(ctx, my_name() .. ': could not reach the ' .. e.name .. ' -- walk to it; AA presses it when you are close.')
+    end
+    N.mh_enter = {t = os.clock(), name = e.name, L = e.L, ctx = ctx}
+    N.last_talk = {name = mob.name, zone = z, x = math.floor(mob.x + 0.5), y = math.floor(mob.y + 0.5), t = os.clock()}
+    set_target(mob.index)
+    coroutine.sleep(0.2)
+    packets.inject(packets.new('outgoing', 0x01A, {
+        ['Target'] = mob.id, ['Target Index'] = mob.index, ['Category'] = 0, ['Param'] = 0, ['_unknown1'] = 0}))
+end
+N.enter_mh = function(ctx, label) coroutine.schedule(function() enter_mh(ctx, label) end, 0) end
+-- the entry's menu: answered when the choice is known; else you pick and AA learns it
+windower.register_event('incoming chunk', function(id, data, modified, injected, blocked)
+    if injected or (id ~= 0x034 and id ~= 0x032) then return end
+    local x = N.mh_enter
+    if not x or os.clock() - x.t > 60 or in_mog_house() then return end
+    local p = packets.parse('incoming', data)
+    local mob = p['NPC Index'] and windower.ffxi.get_mob_by_index(p['NPC Index'])
+    if not (mob and mob.name == x.name) then return end
+    local L = x.L
+    if type(L) == 'table' and L.menu == p['Menu ID'] and L.opt then
+        coroutine.schedule(function()
+            local pk = packets.new('outgoing', 0x05B)
+            pk['Target'] = p['NPC']
+            pk['Option Index'] = L.opt
+            pk['_unknown1'] = L.unk or 0
+            pk['Target Index'] = p['NPC Index']
+            pk['Automated Message'] = false
+            pk['_unknown2'] = 0
+            pk['Zone'] = zone_id()
+            pk['Menu ID'] = p['Menu ID']
+            packets.inject(pk)
+            dbg('Mog House entry: ' .. x.name .. ' option ' .. tostring(L.opt))
+        end, 0.3)
+        return true
+    end
+    tell_ctx(x.ctx, my_name() .. ': pick the way into your Mog House -- AA remembers it.')
+end)
+-- every talk / open by you (and AA's own press) -- for learning the entry
+windower.register_event('outgoing chunk', function(id, data, modified, injected, blocked)
+    if id ~= 0x01A or injected or in_mog_house() then return end
+    local p = packets.parse('outgoing', data)
+    if p['Category'] ~= 0 then return end
+    local mob = p['Target Index'] and windower.ffxi.get_mob_by_index(p['Target Index'])
+    if mob and type(mob.name) == 'string' and mob.name ~= '' and tonumber(mob.x) then
+        N.last_talk = {name = mob.name, zone = zone_id(), x = math.floor(mob.x + 0.5), y = math.floor(mob.y + 0.5), t = os.clock()}
+    end
+end)
+N.mh_entered = function()
+    N.mh_enter = nil
+    local t = N.last_talk
+    N.last_talk = nil
+    if not (t and os.clock() - t.t < 15 and t.zone == zone_id() and t.name ~= 'Moogle') then return end
+    local k = 'mhentry:' .. t.zone .. ':' .. t.name
+    local ch = N.choice
+    local L = {x = t.x, y = t.y}
+    if ch and ch.name == t.name and os.clock() - ch.t < 15 then L.menu, L.opt, L.unk = ch.menu, ch.opt, ch.unk end
+    local old = N.learned[k]
+    if type(old) ~= 'table' or old.x ~= L.x or old.opt ~= L.opt then
+        N.learned[k] = L
+        save_learned()
+        dbg('learned the way into the Mog House: ' .. t.name .. ' (' .. t.x .. ',' .. t.y .. ')')
+    end
+end
+
 N.on_same_zone_done = function()
     local g = N.goal
+    if g and g.mh and g.to == zone_id() then   -- v5.62
+        N.goal = nil
+        N.enter_mh(g.ctx, g.label)
+        return
+    end
     if g and g.npc and g.to == zone_id() then
         N.goal = nil
         coroutine.schedule(function() start_seek(g.npc, g.to, g.x, g.y, g.ctx) end, 3)
@@ -2355,6 +2537,7 @@ local function run_option(o, ctx, label, code, keep_goal)
     if o.kind == 'here' then
         local g = N.goal
         N.goal = nil
+        if g and g.mh and g.to == zone_id() then return N.enter_mh(ctx, label) end   -- v5.62
         if g and g.npc and g.to == zone_id() then   -- v5.12: find the NPC
             start_seek(g.npc, g.to, g.x, g.y, ctx)
             return
@@ -2387,6 +2570,7 @@ local function run_option(o, ctx, label, code, keep_goal)
     end
     if o.kind == 'mh' then   -- v5.22: the player goes in; AA carries on inside
         if N.goal then N.goal.legs = math.max(N.goal.legs, 2) end
+        if mh_entry(zone_id()) then return N.enter_mh(ctx, label) end   -- v5.62: AA presses the way in
         return tell_ctx(ctx, string.format('%s: %s -- go into your Mog House; inside AA talks to %s for you.', my_name(), label, o.tr.name))
     end
     if o.kind == 'walk' then
@@ -2540,10 +2724,20 @@ windower.register_event('prerender', function()
             elseif x.running then windower.ffxi.run(false); x.running = false end
         end
     end
+    local xw = N.mh_enter   -- v5.62: walked there yourself: press it when close
+    if xw and xw.wait and not mh and now - xw.t < 300 then
+        local mob = named_mob(xw.name)
+        if mob and math.sqrt(mob.distance or 999) <= 5 then
+            xw.wait = nil
+            local ctx = xw.ctx
+            coroutine.schedule(function() enter_mh(ctx, 'Mog House') end, 0)
+        end
+    end
     if mh ~= N.last_mh then
         local was = N.last_mh
         N.last_mh = mh
         if was and not mh then N.door_left() end   -- v5.46
+        if was == false and mh and N.mh_entered then N.mh_entered() end   -- v5.62
         local g = N.goal
         if was and not mh and g and g.npc and zone_id() == g.to and os.clock() - (N.last_zone_t or -99) > 6 then
             N.goal = nil   -- v5.46: out of the Mog House into the NPC's own zone: find it
@@ -2724,7 +2918,10 @@ windower.register_event('zone change', function(new_id, old_id)
             -- v5.31: in the NPC's zone: an in-zone warp that lands closer
             -- (Reisenjima: Eschan Portal #8 by Emporox) when that is faster
             -- than walking, then find the NPC
-            if not g.npc then N.goal = nil
+            if g.mh then   -- v5.62: a Mog House: get in
+                N.goal = nil
+                coroutine.schedule(function() if zone_id() == g.to then N.enter_mh(g.ctx, g.label) end end, 6)
+            elseif not g.npc then N.goal = nil
             else
                 coroutine.schedule(function()
                     if N.goal ~= g then return end
@@ -2945,7 +3142,22 @@ end
 -- open that menu with packets (nothing shows), buy (0x083, a stack at a time),
 -- close the menu.
 -- ===========================================================================
-local SHOP_NPCS = {['Curio Vendor Moogle'] = true, ['Green Thumb Moogle'] = true}
+local SHOP_NPCS = {['Curio Vendor Moogle'] = true, ['Green Thumb Moogle'] = true, ['Asrahd'] = true}
+-- v5.61 (Mark, 2026-11-25: "for aa buy, lets include the items such as
+-- reraise III scroll from Asrahd"): Asrahd (Aht Urhgan Whitegate I-8, the
+-- Sanction guard) sells for Imperial Standing through his talk menu -- no shop
+-- list comes in, the item is the menu answer. AA learns an item the first time
+-- you buy it from him by hand (the menu answers you sent, and the item that
+-- turned up in your inventory) and repeats those answers to buy it again, one
+-- talk per item. The IS price is learned from his talk (your IS before/after).
+local EV = {}   -- v5.61 (one local: nav.lua is at Lua's 200-locals limit)
+EV.npcs = {['Asrahd'] = 'IS'}
+EV.wares = {'instant reraise', 'reraise iii', 'instant warp', 'lambent', 'katana strap', 'axe grip', 'staff strap',
+    'heat capacitor', 'power cooler', 'barrage turbine', 'galvanizer', 'ephramadian throne', 'glyph', 'evanessence',
+    'dathaba', 'perdu', 'lieutenant', 'volunteer', 'mercenary', 'imperial dart', 'mamoolbane', 'lamiabane',
+    'trollbane', 'luzaf', 'sneaking boots', 'trooper', 'sentinel shield', 'shark gun', 'puppet claws', 'singh kilij',
+    'multiple ring', 'haten', 'priest', 'chaotic earring'}
+EV.hint = {['Green Thumb Moogle'] = 'mog garden', ['Curio Vendor Moogle'] = "port san d'oria", ['Asrahd'] = 'asrahd'}
 local SCAN_NPCS = {['Curio Vendor Moogle'] = true}   -- Green Thumb's menu also moves you out of the garden: learned by hand only
 local B = {char = nil, cat = nil, ses = nil, run = nil, menu = {}}
 local function shop_file() return data_file('shops_' .. my_name() .. '.lua') end
@@ -2982,8 +3194,10 @@ local function shop_save()
         for _, id in ipairs(ids) do
             local e = cat[npc][id]
             local it = res.items[id]
-            f:write(string.format('        [%d] = {slot = %d, price = %d, seq = %q},   -- %s\n', id, e.slot or 0, e.price or 0, e.seq or '',
-                it and it.en or '?'))
+            local extra = ''
+            if e.kind then extra = string.format(', kind = %q, per = %d', e.kind, e.per or 1) end   -- v5.61 (Asrahd)
+            f:write(string.format('        [%d] = {slot = %d, price = %d, seq = %q%s},   -- %s\n', id, e.slot or 0, e.price or 0, e.seq or '',
+                extra, it and it.en or '?'))
         end
         f:write('    },\n')
     end
@@ -3010,6 +3224,51 @@ local function learn_list(npc, seq, list)
     return n
 end
 
+-- v5.61: Asrahd -- what is in the inventory (item id -> count)
+function EV.inv_counts()
+    local t = {}
+    local b = windower.ffxi.get_items(0)
+    if type(b) ~= 'table' then return t end
+    for i = 1, (tonumber(b.max) or 80) do
+        local x = b[i]
+        if type(x) == 'table' and (x.id or 0) > 0 and x.id ~= 65535 then t[x.id] = (t[x.id] or 0) + (x.count or 0) end
+    end
+    return t
+end
+function EV.inv_count(id) return EV.inv_counts()[id] or 0 end
+function EV.price_str(npc, e)
+    local cur = EV.npcs[npc]
+    if cur then return ((e.price or 0) > 0 and tostring(e.price) or '?') .. ' ' .. cur end
+    return tostring(e.price or 0) .. ' gil'
+end
+-- a menu answer you sent Asrahd by hand: did an item turn up? (the answers
+-- since the last item that turned up = how to buy it)
+function EV.check(s, upto)
+    if B.ses ~= s or not s.inv or #s.seq > upto then return end   -- a later answer checks instead
+    local now = EV.inv_counts()
+    for id, c in pairs(now) do
+        local d = c - (s.inv[id] or 0)
+        if d > 0 then
+            local steps = {}
+            for i = (s.last or 0) + 1, upto do steps[#steps + 1] = s.seq[i] end
+            if #steps > 0 then
+                local cat = shop_cat()
+                cat[s.npc] = cat[s.npc] or {}
+                local old = cat[s.npc][id]
+                cat[s.npc][id] = {slot = 0, price = old and old.price or 0, seq = seq_str(steps), kind = 'event', per = d}
+                shop_save()
+                local pp = B.pend
+                if pp and pp.npc == s.npc and pp.id == id and pp.bal == s.bal then pp.n = pp.n + d
+                else B.pend = {npc = s.npc, id = id, n = d, bal = s.bal} end
+                windower.add_to_chat(207, string.format('[AA] buy: learned %s from %s -- next time "aa buy %s [qty]".',
+                    res.items[id] and res.items[id].en or tostring(id), s.npc, (res.items[id] and res.items[id].en or ''):lower()))
+                dbg(string.format('buy: learned %d (x%d) from %s (%s)', id, d, s.npc, seq_str(steps)))
+            end
+        end
+    end
+    s.inv, s.last = now, upto
+end
+
 -- watch what the player opens by hand (and catch our own runs' packets)
 windower.register_event('outgoing chunk', function(id, data, modified, injected, blocked)
     if id ~= 0x05B or injected then return end
@@ -3023,6 +3282,10 @@ windower.register_event('outgoing chunk', function(id, data, modified, injected,
     end
     s.seq[#s.seq + 1] = {menu = p['Menu ID'], opt = p['Option Index'], unk = p['_unknown1'] or 0, auto = p['Automated Message'] and true or false}
     s.t = os.clock()
+    if EV.npcs[mob.name] and not B.run then   -- v5.61
+        local upto = #s.seq
+        coroutine.schedule(function() EV.check(s, upto) end, 2.5)
+    end
 end)
 windower.register_event('incoming chunk', function(id, data, modified, injected, blocked)
     if injected then return end
@@ -3032,9 +3295,22 @@ windower.register_event('incoming chunk', function(id, data, modified, injected,
         local mob = p['NPC Index'] and windower.ffxi.get_mob_by_index(p['NPC Index'])
         if mob and SHOP_NPCS[mob.name] then
             B.menu[mob.name] = p['Menu ID']
-            if not r then B.ses = {npc = mob.name, idx = p['NPC Index'], seq = {}, t = os.clock()} end   -- a new talk: new steps
+            if not r then
+                B.ses = {npc = mob.name, idx = p['NPC Index'], seq = {}, t = os.clock()}   -- a new talk: new steps
+                if EV.npcs[mob.name] then   -- v5.61: what you have now + your IS (his menu's first number)
+                    local bal = id == 0x034 and data:unpack('I', 9) or nil
+                    B.ses.inv, B.ses.last, B.ses.bal = EV.inv_counts(), 0, bal
+                    local pp = B.pend   -- bought by hand last talk: the IS it took
+                    if pp and pp.npc == mob.name and pp.bal and bal and bal < pp.bal and (pp.bal - bal) % pp.n == 0 then
+                        local e = shop_cat()[pp.npc] and shop_cat()[pp.npc][pp.id]
+                        if e then e.price = (pp.bal - bal) / pp.n; shop_save() end
+                    end
+                    B.pend = nil
+                end
+            end
         end
         if r and r.stage == 'menu' and p['NPC'] == r.npc_id then
+            if id == 0x034 then r.bal = data:unpack('I', 9) end   -- v5.61 (Asrahd: your IS)
             r.menu, r.stage = p['Menu ID'], 'shop'
             return true   -- our menu: never drawn
         end
@@ -3149,6 +3425,81 @@ local function open_shop(mob, steps)
     return r
 end
 
+-- v5.61: Asrahd: one talk per item -- talk (menu hidden), the learned
+-- answers, wait for the item, close
+function EV.talk(mob, steps)
+    local r = {npc_id = mob.id, npc_index = mob.index, npc = mob.name, stage = 'menu', items = {}}
+    B.run = r
+    poke(mob)
+    if not wait_for(function() return r.stage ~= 'menu' end, 3) then
+        poke(mob)
+        if not wait_for(function() return r.stage ~= 'menu' end, 3) then
+            if B.run == r then B.run = nil end
+            return nil
+        end
+    end
+    return r
+end
+function EV.close(r, steps)
+    local last = steps[#steps]
+    if last and last.auto then release_menu({menu = r.menu, npc_id = r.npc_id, npc_index = r.npc_index})
+    else release_menu(nil) end   -- his talk already ended with your answer
+    if B.run == r then B.run = nil end
+end
+function EV.buy_run(ctx, npc, id, qty, reply, mob)
+    local e = shop_cat()[npc][id]
+    local steps = seq_parse(e.seq)
+    if #steps == 0 then return reply(my_name() .. ': AA has no menu answers for ' .. item_name(id) .. ' -- buy one from ' .. npc .. ' by hand once.') end
+    local it = res.items[id]
+    local stack = (it and tonumber(it.stack)) or 1
+    local per = math.max(1, e.per or 1)
+    local free = free_slots()
+    if free < 1 then return reply(my_name() .. ': no free inventory slot.') end
+    local have = EV.inv_count(id)
+    local room = free * stack + ((have > 0 and stack > 1) and (stack - have % stack) % stack or 0)
+    if qty > room then
+        qty = room
+        reply(string.format('%s: room for %d only -- buying %d.', my_name(), room, qty))
+    end
+    local bought, prev_bal, why = 0, nil, nil
+    while bought < qty do
+        local before = EV.inv_count(id)
+        local r = EV.talk(mob, steps)
+        if not r then why = npc .. ' did not answer'; break end
+        if prev_bal and r.bal and r.bal < prev_bal and (prev_bal - r.bal) % per == 0 and e.price ~= (prev_bal - r.bal) / per then
+            e.price = (prev_bal - r.bal) / per; shop_save()
+        end
+        if e.price and e.price > 0 and r.bal and r.bal < e.price then
+            EV.close(r, {{auto = true}})
+            why = string.format('not enough %s (%d, one costs %d)', EV.npcs[npc] or 'points', r.bal, e.price)
+            break
+        end
+        prev_bal = r.bal
+        send_steps(r, steps)
+        local got = wait_for(function() return EV.inv_count(id) > before end, 4)
+        EV.close(r, steps)
+        if not got then why = 'nothing came (' .. (EV.npcs[npc] or 'points') .. ', rank, or not unlocked on this character?)'; break end
+        bought = bought + (EV.inv_count(id) - before)
+        coroutine.sleep(1.0)
+    end
+    -- price not known yet: one more talk shows what the last one took
+    if bought > 0 and (e.price or 0) == 0 and prev_bal then
+        coroutine.sleep(0.5)
+        local r = EV.talk(mob, steps)
+        if r then
+            if r.bal and r.bal < prev_bal then e.price = math.floor((prev_bal - r.bal) / per + 0.5); shop_save() end
+            EV.close(r, {{auto = true}})
+        end
+    end
+    if bought > 0 then
+        reply(string.format('%s: bought %d %s from %s%s%s.', my_name(), bought, item_name(id), npc,
+            (e.price or 0) > 0 and string.format(' for %d %s', math.floor(bought / per) * e.price, EV.npcs[npc] or '') or '',
+            why and (' -- stopped: ' .. why) or ''))
+    else
+        reply(string.format('%s: %s did not sell %s -- %s.', my_name(), npc, item_name(id), why or '?'))
+    end
+end
+
 local function buy_run(ctx, npc, id, qty, reply)
     local e = shop_cat()[npc][id]
     local mob, d = shop_mob({[npc] = true})
@@ -3159,6 +3510,7 @@ local function buy_run(ctx, npc, id, qty, reply)
         end
         if not walk_to(mob, reply) then return reply(my_name() .. ': could not get to ' .. npc .. '.') end
     end
+    if e.kind == 'event' then return EV.buy_run(ctx, npc, id, qty, reply, mob) end   -- v5.61 (Asrahd)
     local it = res.items[id]
     local stack = (it and tonumber(it.stack)) or 1
     local cost = (e.price or 0) * qty
@@ -3235,7 +3587,7 @@ function aa_buy_command(ctx, words, reply)
     for _, x in ipairs(words or {}) do w[#w + 1] = x end
     local first = (w[1] or ''):lower()
     if first == '' then
-        return reply('aa buy <item or part of its name> [qty] | aa buy list [text] | aa buy scan (at a Curio Vendor Moogle)')
+        return reply('aa buy <item or part of its name> [qty] | aa buy list [text] | aa buy scan (at a Curio Vendor Moogle) | Asrahd: buy an item from him by hand once')
     end
     if B.run then return reply(my_name() .. ': a purchase is already running.') end
     if first == 'scan' then return coroutine.schedule(function() buy_scan(reply) end, 0) end
@@ -3284,13 +3636,20 @@ function aa_buy_command(ctx, words, reply)
         return a.npc < b.npc
     end)
     if next(shop_cat()) == nil then
-        return reply(my_name() .. ': AA does not know any moogle shop yet -- "aa buy scan" at a Curio Vendor Moogle, or open the moogle\'s menus once by hand.')
+        return reply(my_name() .. ': AA does not know any moogle shop yet -- "aa buy scan" at a Curio Vendor Moogle, or open the moogle\'s menus once by hand (Asrahd: buy the item from him by hand once).')
     end
-    if #hits == 0 then return reply(my_name() .. ': no moogle item matches "' .. q .. '" (aa buy list shows them all).') end
+    if #hits == 0 then
+        for _, wname in ipairs(EV.wares) do   -- v5.61: one of Asrahd's, not learned yet
+            if q ~= '' and (wname:find(q, 1, true) or q:find(wname, 1, true)) then
+                return reply(my_name() .. ': "' .. q .. '" sounds like Asrahd\'s (Imperial Standing, Aht Urhgan Whitegate I-8) -- AA learns it when you buy one from him by hand once; then aa buy does the rest.')
+            end
+        end
+        return reply(my_name() .. ': no shop item matches "' .. q .. '" (aa buy list shows them all).')
+    end
     if listing then
         for i, h in ipairs(hits) do
             if i > 30 then reply(string.format('... %d more', #hits - 30)); break end
-            reply(string.format('%s -- %d gil (%s)', h.name, h.e.price or 0, h.npc))
+            reply(string.format('%s -- %s (%s)', h.name, EV.price_str(h.npc, h.e), h.npc))
         end
         return
     end
@@ -3306,8 +3665,8 @@ function aa_buy_command(ctx, words, reply)
     local function go(h)
         if B.run then return reply(my_name() .. ': a purchase is already running.') end
         if not h.here and not shop_mob({[h.npc] = true}) then
-            return reply(string.format('%s: %s is sold by the %s -- go there first (aa nav %s).', my_name(), h.name, h.npc,
-                h.npc == 'Green Thumb Moogle' and 'mog garden' or 'port san d\'oria'))
+            return reply(string.format('%s: %s is sold by %s%s -- go there first (aa nav %s).', my_name(), h.name,
+                EV.npcs[h.npc] and '' or 'the ', h.npc, EV.hint[h.npc] or h.npc:lower()))
         end
         coroutine.schedule(function() buy_run(ctx, h.npc, h.id, qty, reply) end, 0)
     end
@@ -3324,13 +3683,13 @@ function aa_buy_command(ctx, words, reply)
                 local n = 0
                 for _ in pairs(shown) do n = n + 1 end
                 if n <= 8 then
-                    reply(string.format('  aa buy %s %d  -- %d gil each (%s)', h.name:lower(), qty, h.e.price or 0, h.npc))
+                    reply(string.format('  aa buy %s %d  -- %s each (%s)', h.name:lower(), qty, EV.price_str(h.npc, h.e), h.npc))
                 end
                 if n <= 40 then
                     local hh = h
                     rows[#rows + 1] = {
-                        text = string.format('  %-24s %8s gil  x%-3d %9s gil   %s%s ', h.name, tostring(h.e.price or 0), qty,
-                            tostring((h.e.price or 0) * qty), h.npc, h.here and '' or '  (not here)'),
+                        text = string.format('  %-24s %8s  x%-3d %9s   %s%s ', h.name, EV.price_str(h.npc, h.e), qty,
+                            (h.e.price or 0) > 0 and EV.price_str(h.npc, {price = (h.e.price or 0) * qty}) or '?', h.npc, h.here and '' or '  (not here)'),
                         trade = function() go(hh) end,
                     }
                 end
