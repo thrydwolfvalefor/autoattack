@@ -150,7 +150,7 @@ function AA_MAIN()   -- v4.65: the whole addon (closed at the bottom of this fil
 
 _addon.name     = 'AutoAttack'
 _addon.author   = 'Mark Williams'
-_addon.version  = '5.64'
+_addon.version  = '5.65'
 _addon.commands = {'autoattack', 'aa'}
 
 
@@ -280,6 +280,7 @@ local heal_buff_outside_battle = AA_CFG.heal_buff_outside_battle == true
 debug_level       = 1
 DEBUG_LOG_FILE    = false   -- level 2: also write every line to data/logs/aa_<Character>_<date>.log (//aa debug file on|off)
 DEBUG_SLOW_TICK   = 3.0    -- level 2: TIMING line when one main-loop pass takes longer than this (s)
+DEBUG_CHAT        = false  -- v5.65: level 2 lines in chat too (false = log file only; //aa debug chat on|off)
 DEBUG_FRAME_STALL = 0.5    -- level 2: TIMING line when the client goes this long between frames (s)
 
 -- v4.29: move_to_target ('off' | 'pull' | 'provoke' | 'melee' | 'target' |
@@ -792,6 +793,7 @@ do
     local dv = type(AA_CFG) == 'table' and type(AA_CFG.dev) == 'table' and AA_CFG.dev or {}
     if dv.debug_level ~= nil then debug_level = tonumber(dv.debug_level) or debug_level end
     if dv.debug_log_file ~= nil then DEBUG_LOG_FILE = (dv.debug_log_file == true) end
+    if dv.debug_chat ~= nil then DEBUG_CHAT = (dv.debug_chat == true) end   -- v5.65
     if dv.cmd_mode ~= nil then cmd_mode = (dv.cmd_mode == true) end
     if dv.ws_blocked_debug ~= nil then ws_blocked_debug = (dv.ws_blocked_debug == true) end
 end
@@ -1026,6 +1028,8 @@ local WEAKNESS_GLOBAL_LOCKOUT = 6  -- seconds between any weakness spell casts
 aa_wc_wall, aa_wc_clock, aa_wc_sec = os.time(), os.clock(), 0
 aa_dbg_last        = 0      -- os.clock() of the previous dev line (for +delta)
 aa_dbg_file        = nil    -- open log file handle (level 2 + DEBUG_LOG_FILE)
+aa_dbg_flush_at    = 0      -- v5.65: os.clock() of the last flush
+aa_dbg_unflushed   = false  -- v5.65: lines written since then (prerender flushes them)
 aa_dbg_file_path   = nil
 aa_dbg_file_failed = false
 -- v4.59: per-character, per-day log files: data/logs/aa_<Character>_<YYYY-MM-DD>.log
@@ -1079,7 +1083,14 @@ function aa_log_file(line)
             .. ' (' .. aa_log_char_name() .. ') ====\n')
     end
     aa_dbg_file:write(line, '\n')
-    aa_dbg_file:flush()  -- every line, so a client crash still leaves the last lines on disk
+    -- v5.65: flush at most every 0.5s (prerender flushes what is left), so a
+    -- client crash still leaves all but the last half second on disk
+    local _now = os.clock()
+    if _now - aa_dbg_flush_at >= 0.5 then
+        aa_dbg_file:flush(); aa_dbg_flush_at = _now; aa_dbg_unflushed = false
+    else
+        aa_dbg_unflushed = true
+    end
 end
 function aa_log(lvl, msg)
     msg = tostring(msg)
@@ -1091,7 +1102,13 @@ function aa_log(lvl, msg)
         local d = (aa_dbg_last > 0) and (now - aa_dbg_last) or 0
         aa_dbg_last = now
         local stamp = aa_wall_clock(now) .. string.format(' +%.3f', d)
-        windower.add_to_chat(8, '[DEBUG ' .. stamp .. '] ' .. msg)
+        -- v5.65: level 1 lines in chat; level 2 lines to the file only, unless
+        -- DEBUG_CHAT is on or there is no file log
+        if lvl <= 1 then
+            windower.add_to_chat(8, '[AA] ' .. msg)
+        elseif DEBUG_CHAT or not DEBUG_LOG_FILE or aa_dbg_file_failed then
+            windower.add_to_chat(8, '[DEBUG ' .. stamp .. '] ' .. msg)
+        end
         aa_log_file(stamp .. ' L' .. lvl .. ' ' .. msg)
     else
         windower.add_to_chat(8, '[AA] ' .. msg)
@@ -5659,7 +5676,7 @@ GSC_DEF = {
     -- v4.98: learn_window replaces learn_cap; mob_k blends a mob type's own figure with the
     -- party-wide toughness of that mob; odd_* skip a sample far under a settled average
     learn_window = 60, mob_k = 5, odd_min = 20, odd_ratio = 0.25, odd_repeat = 3,
-    sync_min = 5, pool_max = 6, weapon_hold = 3, mb_weight = 0.5,
+    sync_min = 5, sync_cooldown = 300, pool_max = 6, weapon_hold = 3, mb_weight = 0.5,
 }
 GSC = {on = nil, chain = nil, jobs = {}, began = {}, pre_done = {}, pre_n = 0, mob = 0, mob_since = 0,
        fired_at = 0, said = {}, ids = {}, ids_at = -10, act_at = -10, act_val = false, act_last = nil,
@@ -7145,21 +7162,21 @@ function gsc_watch()
 end
 
 -- ---------------------------------------------------------------- knowledge sync
-function gsc_sync_start(why, delay)
+function gsc_sync_start(why, delay, reply)
     if gsc_cfg('sync') == false then return end
     GSC_P.dig_mine_at = os.clock() + (delay or 0)
     coroutine.schedule(function()
-        local ok, err = pcall(gsc_send_digest, why)
+        local ok, err = pcall(gsc_send_digest, why, reply)
         if not ok then debug_msg('GSC: digest failed: ' .. tostring(err)) end
     end, delay or 0)
 end
-function gsc_send_digest(why)
+function gsc_send_digest(why, reply)
     if not gsc_has_players() then return end
     gsc_k_ensure()
     local parts = {}
     for who, n in pairs(gsc_k_totals()) do parts[#parts + 1] = who .. '=' .. n end
     table.sort(parts)
-    local line = 'aa~g d ' .. ((#parts > 0) and table.concat(parts, ',') or '-')
+    local line = 'aa~g d ' .. (reply and 'r ' or '') .. ((#parts > 0) and table.concat(parts, ',') or '-')
     while #line > 110 and line:find(',') do line = line:gsub(',[^,]*$', '') end
     GSC_P.dig_mine_at = os.clock()
     gsc_party_line(line)
@@ -7176,8 +7193,17 @@ function gsc_on_digest(sender, rest)
     local d = {}
     for who, n in rest:gmatch('(%a+)=(%d+)') do d[who] = tonumber(n) end
     GSC_P.dig[sender:lower()] = {t = os.clock(), tot = d, name = sender}
-    -- a round we didn't start (we missed the join / aa fight): answer once
-    if os.clock() - GSC_P.dig_mine_at > 30 then gsc_sync_start('digest from ' .. sender, 1 + gsc_slot() * 1.5) end
+    -- a round we didn't start (we missed the join / aa fight): answer once.
+    -- v5.65: an answer ("aa~g d r ...") is never answered, and we answer at
+    -- most once per sync_cooldown -- Shadow and Myth answered each other all
+    -- day (11-26: 31,700 party lines), the answer reaching the other AA >30s
+    -- late behind the dump in the party queue.
+    if rest:match('^r%s') then return end
+    local now = os.clock()
+    if now - GSC_P.dig_mine_at > 30 and now - (GSC_P.dig_answered_at or -1e9) >= gsc_num('sync_cooldown') then
+        GSC_P.dig_answered_at = now
+        gsc_sync_start('digest from ' .. sender, 1 + gsc_slot() * 1.5, true)
+    end
 end
 -- for every player: if we know the most about them (digests from the last 30s;
 -- a tie goes to the name first in the alphabet), send our entries for them
@@ -7271,7 +7297,10 @@ function gsc_on_entries(sender, rest)
     local ch = gsc_k_merge(GSC_KB, src)   -- v4.98: into the base (and kept for the release)
     gsc_k_merge(GSC_KP, src)
     if ch > 0 then
-        gsc_k_rebuild()
+        -- v5.65: one rebuild 2s after the last line of a burst (was one per line)
+        GSC_P.rb_gen = (GSC_P.rb_gen or 0) + 1
+        local g = GSC_P.rb_gen
+        coroutine.schedule(function() if GSC_P.rb_gen == g then pcall(gsc_k_rebuild) end end, 2)
         GSC_KS.dirty = true
         debug_msg('GSC: ' .. ch .. ' learned entries for ' .. who .. ' taken from ' .. sender .. '.')
     end
@@ -13497,6 +13526,33 @@ v5.59 - Fight-wait replies reach the sender whole, and the invite no longer
         * Progress lines: "Still fighting: Locus Dire Bat at 58% HP. Inviting
           Vayne when it's over, gives up in 2:30." The mob falls back to the
           lowest-HP mob on the party when nothing is on the cursor.
+v5.65 - Lighter: far fewer chat lines and party lines (Mark, 2026-11-27: "My
+        game is getting a black screen where the environment isn't loading,
+        but NPCs are ... please review the script for ballooning size, or too
+        many messages in chat").
+        Log 11-26 (Shadowhammer, dev level): 95,500 debug lines in a day went
+        to the chat window (~66 a minute) as well as the file, and this PC
+        sent 27,900 hidden "/p aa~g" party lines (~30 a minute, all day).
+        31,700 of the party lines were knowledge sync: Shadow and Myth
+        answered each other's digests for ever (345 + 145 answers), because
+        an answer digest waited behind the ~60-line dump in the party queue
+        and reached the other AA more than 30s later -- so it looked like a
+        new round and was answered again. Every received line also rebuilt
+        the whole GSC table (6,284 rebuilds). AA's own Lua memory is steady
+        (5-13 MB, no leak); the load was the volume going through the chat
+        log and every addon's 'incoming text' handler.
+        * Level 2 (dev) lines go to the log file only. Level 1 lines still
+          show in chat. //aa debug chat on|off (or dev = {debug_chat = true}
+          in aa_config.lua) puts dev lines back in chat; with the file log
+          off they show in chat as before.
+        * Knowledge sync: an answer digest is marked ("aa~g d r ...") and is
+          never answered; another AA's digest is answered at most once per
+          gsc sync_cooldown (300s). aa fight / a join / "aa gsc sync" start a
+          round as before.
+        * Received learned entries: one rebuild 2s after the last line.
+        * Log file flushed at most every 0.5s (was every line).
+        * nav.lua: the Shami / Monisette chat watcher skips lines with no ':'
+          (all battle lines) before copying the text.
 ]]
 
 
@@ -13852,7 +13908,12 @@ function aa_addon_command(command, ...)
         local _m = subcmd and subcmd:lower()
         local _lv = {['0'] = 0, off = 0, ['1'] = 1, release = 1, rel = 1, min = 1,
                      ['2'] = 2, dev = 2, deep = 2}
-        if _m == 'file' then
+        if _m == 'chat' then   -- v5.65: //aa debug chat [on|off]
+            local _f = args[2] and args[2]:lower()
+            if _f == 'on' then DEBUG_CHAT = true
+            elseif _f == 'off' then DEBUG_CHAT = false
+            else DEBUG_CHAT = not DEBUG_CHAT end
+        elseif _m == 'file' then
             local _f = args[2] and args[2]:lower()
             if _f == 'on' then DEBUG_LOG_FILE = true
             elseif _f == 'off' then DEBUG_LOG_FILE = false
@@ -13864,11 +13925,11 @@ function aa_addon_command(command, ...)
             if debug_level < 2 then aa_log_close() end
             aa_dbg_last = 0
         elseif _m then
-            windower.add_to_chat(8, '[AutoAttack] debug: use 0|1|2 (off|release|dev) or file on|off')
+            windower.add_to_chat(8, '[AutoAttack] debug: use 0|1|2 (off|release|dev), file on|off or chat on|off')
         end
         local _names = {[0] = 'OFF', [1] = 'RELEASE (minimal)', [2] = 'DEV (deep + timing)'}
         windower.add_to_chat(8, '[AutoAttack] debug_level ' .. tostring(debug_level) .. ' = ' ..
-            tostring(_names[debug_level] or '?') .. ' | file log ' .. (DEBUG_LOG_FILE and 'ON' or 'OFF') ..
+            tostring(_names[debug_level] or '?') .. ' | file log ' .. (DEBUG_LOG_FILE and 'ON' or 'OFF') .. ' | dev lines in chat ' .. ((DEBUG_CHAT or not DEBUG_LOG_FILE) and 'ON' or 'OFF') ..
             ((debug_level >= 2 and DEBUG_LOG_FILE) and (' -> data/logs/aa_' .. os.date('%Y-%m-%d') .. '.log') or ''))
     elseif command == 'target' then
         -- v4.07: //aa target [packet|native] -- how set_target() puts the cursor on a mob
@@ -14054,6 +14115,10 @@ aa_prune_next    = os.clock() + 60   -- v4.18
 aa_frame_last, aa_stall_next = 0, 0   -- v4.25
 windower.register_event('prerender', function()
     local now = os.clock()
+    if aa_dbg_unflushed and aa_dbg_file and now - aa_dbg_flush_at >= 0.5 then   -- v5.65
+        aa_dbg_unflushed, aa_dbg_flush_at = false, now
+        pcall(aa_dbg_file.flush, aa_dbg_file)
+    end
     -- v4.25: keep the ms wall clock anchored (see aa_wall_clock)
     local _sec = os.time()
     if _sec ~= aa_wc_sec then

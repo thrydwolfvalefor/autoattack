@@ -3805,6 +3805,9 @@ end
 -- ---------------------------------------------------------------------------
 windower.register_event('incoming text', function(original, modified, mode)
     if type(original) ~= 'string' then return end
+    -- v5.65: this sees every chat line; NPC talk ("Shami : ...") and the
+    -- exchange window are all it needs, so skip the rest before copying
+    if not original:find(':', 1, true) and not original:find('balance of', 1, true) then return end
     local t = original:gsub('[%c\127-\255]', ''):gsub('^%s+', '')
     local who, msg = t:match('^(%a+) : (.+)$')
     if not who then

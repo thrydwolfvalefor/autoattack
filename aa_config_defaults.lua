@@ -293,6 +293,7 @@ local group_skillchain = {enabled = true,
 	odd_repeat     = 3,      -- v4.98
 	learn_save_secs = 120,
 	sync_min       = 5,
+	sync_cooldown  = 300,   -- v5.65: answer another AA's knowledge digest at most once per this many seconds
 	pool_max       = 6,
 	weapon_hold    = 3,
 	mb_weight      = 0.5,
@@ -1984,6 +1985,7 @@ local nav = {enabled = true,
 --   debug_log_file   true = level 2 also writes data/logs/aa_<Character>_<date>.log
 --   cmd_mode         true = [CMD] lines in chat
 --   ws_blocked_debug true = 'WS BLOCKED: needs X TP' lines
+--   debug_chat       true = level 2 lines in the chat window too (v5.65; default: log file only)
 -- ===========================================================================
 local dev = {}
 
